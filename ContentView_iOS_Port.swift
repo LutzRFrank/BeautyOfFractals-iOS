@@ -381,7 +381,13 @@ Fast, High or Deep. Deep renders more detail at high zooms.
 
 Drag: select an area and zoom in
 
-⌥ Option + Drag: move the view
+2-finger drag: move the view on iPhone and iPad
+
+Pinch: zoom in and out
+
+Double tap: zoom in at tap position
+
+⌥ Option + Drag: move the view on Mac
 
 + / -: zoom in and out
 
@@ -447,6 +453,13 @@ The zoom factor overlay is only visible in the app and is not included in export
                     }
                     
                     Button {
+                        showHelp = true
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                    }
+                    .accessibilityLabel("Help")
+                    
+                    Button {
                         zoomOut()
                     } label: {
                         Image(systemName: "minus.magnifyingglass")
@@ -504,11 +517,6 @@ The zoom factor overlay is only visible in the app and is not included in export
                     }
                     #endif
                     
-                    Button {
-                        showHelp = true
-                    } label: {
-                        Image(systemName: "questionmark.circle")
-                    }
                 }
                 .padding(.horizontal, isCompact ? 8 : 10)
                 .padding(.vertical, isCompact ? 6 : 8)
@@ -870,6 +878,63 @@ struct MandelbrotView: View {
                             .frame(width: rect.width, height: rect.height)
                             .position(x: rect.midX, y: rect.midY)
                     }
+                    
+                    #if os(iOS)
+                    MultiTouchGestureOverlay(
+                        onSelectionChanged: { start, current in
+                            pinchStartScale = nil
+                            isPanning = false
+                            dragStart = start
+                            dragCurrent = current
+                        },
+                        onSelectionEnded: { start, end in
+                            defer { resetDragState() }
+                            let rect = makeRect(from: start, to: end)
+                            if rect.width > 10 && rect.height > 10 {
+                                zoomToSelection(
+                                    rect: rect,
+                                    viewSize: geometry.size
+                                )
+                            }
+                        },
+                        onTwoFingerPan: { delta in
+                            resetDragState()
+                            pinchStartScale = nil
+                            panBy(delta: delta, viewSize: geometry.size)
+                        },
+                        onPinchChanged: { rawFactor in
+                            resetDragState()
+                            if pinchStartScale == nil {
+                                pinchStartScale = scale
+                            }
+                            guard let pinchStartScale else {
+                                return
+                            }
+                            let dampening = 0.42
+                            let factor = max(0.05, 1.0 + (rawFactor - 1.0) * dampening)
+                            scale = max(pinchStartScale / factor, 1.0e-15)
+                        },
+                        onPinchEnded: { rawFactor in
+                            pinchStartScale = nil
+                            let dampening = 0.42
+                            let factor = max(0.05, 1.0 + (rawFactor - 1.0) * dampening)
+                            if factor > 1.05 {
+                                increaseIterationsForZoom()
+                            } else if factor < 0.95 {
+                                decreaseIterationsForZoom()
+                            }
+                        },
+                        onDoubleTap: { location in
+                            zoomAt(
+                                location: location,
+                                factor: 2.0,
+                                viewSize: geometry.size
+                            )
+                        }
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    #endif
                 }
                 
                 HStack(alignment: .top) {
@@ -933,41 +998,8 @@ struct MandelbrotView: View {
             }
             .gesture(selectionDragGesture(viewSize: geometry.size))
             #else
-            .highPriorityGesture(selectionDragGesture(viewSize: geometry.size))
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .onChanged { value in
-                        if pinchStartScale == nil {
-                            pinchStartScale = scale
-                            resetDragState()
-                        }
-                        
-                        guard let pinchStartScale else {
-                            return
-                        }
-                        
-                        scale = max(pinchStartScale / Double(value), 1.0e-15)
-                    }
-                    .onEnded { value in
-                        pinchStartScale = nil
-                        
-                        if value > 1.05 {
-                            increaseIterationsForZoom()
-                        } else if value < 0.95 {
-                            decreaseIterationsForZoom()
-                        }
-                    }
-            )
-            .simultaneousGesture(
-                SpatialTapGesture(count: 2)
-                    .onEnded { value in
-                        zoomAt(
-                            location: value.location,
-                            factor: 2.0,
-                            viewSize: geometry.size
-                        )
-                    }
-            )
+            // iOS touch handling is performed by MultiTouchGestureOverlay above.
+            // This avoids SwiftUI gesture conflicts between selection drag, pinch and 2-finger pan.
             #endif
         }
     }
@@ -1073,6 +1105,19 @@ struct MandelbrotView: View {
         dragCurrent = current
     }
     
+    private func panBy(delta: CGSize, viewSize: CGSize) {
+        guard viewSize.width > 0, viewSize.height > 0 else {
+            return
+        }
+        
+        let viewWidth = Double(viewSize.width)
+        let viewHeight = Double(viewSize.height)
+        let aspectRatio = viewWidth / viewHeight
+        
+        centerX -= (Double(delta.width) / viewWidth) * scale * aspectRatio
+        centerY -= (Double(delta.height) / viewHeight) * scale
+    }
+    
     private func zoomToSelection(rect: CGRect, viewSize: CGSize) {
         let viewWidth = Double(viewSize.width)
         let viewHeight = Double(viewSize.height)
@@ -1169,6 +1214,214 @@ struct MandelbrotView: View {
         }
     }
 }
+
+#if os(iOS)
+private struct MultiTouchGestureOverlay: UIViewRepresentable {
+    let onSelectionChanged: (CGPoint, CGPoint) -> Void
+    let onSelectionEnded: (CGPoint, CGPoint) -> Void
+    let onTwoFingerPan: (CGSize) -> Void
+    let onPinchChanged: (Double) -> Void
+    let onPinchEnded: (Double) -> Void
+    let onDoubleTap: (CGPoint) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            onSelectionChanged: onSelectionChanged,
+            onSelectionEnded: onSelectionEnded,
+            onTwoFingerPan: onTwoFingerPan,
+            onPinchChanged: onPinchChanged,
+            onPinchEnded: onPinchEnded,
+            onDoubleTap: onDoubleTap
+        )
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.backgroundColor = .clear
+        view.isOpaque = false
+        view.isUserInteractionEnabled = true
+        view.isMultipleTouchEnabled = true
+
+        let selection = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleSelection(_:))
+        )
+        selection.minimumNumberOfTouches = 1
+        selection.maximumNumberOfTouches = 1
+        selection.cancelsTouchesInView = false
+        selection.delaysTouchesBegan = false
+        selection.delaysTouchesEnded = false
+        selection.delegate = context.coordinator
+
+        let twoFingerPan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTwoFingerPan(_:))
+        )
+        twoFingerPan.minimumNumberOfTouches = 2
+        twoFingerPan.maximumNumberOfTouches = 2
+        twoFingerPan.cancelsTouchesInView = false
+        twoFingerPan.delaysTouchesBegan = false
+        twoFingerPan.delaysTouchesEnded = false
+        twoFingerPan.delegate = context.coordinator
+
+        let pinch = UIPinchGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handlePinch(_:))
+        )
+        pinch.cancelsTouchesInView = false
+        pinch.delaysTouchesBegan = false
+        pinch.delaysTouchesEnded = false
+        pinch.delegate = context.coordinator
+
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:))
+        )
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.numberOfTouchesRequired = 1
+        doubleTap.cancelsTouchesInView = false
+        doubleTap.delegate = context.coordinator
+
+        selection.require(toFail: doubleTap)
+
+        view.addGestureRecognizer(selection)
+        view.addGestureRecognizer(twoFingerPan)
+        view.addGestureRecognizer(pinch)
+        view.addGestureRecognizer(doubleTap)
+
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onSelectionChanged = onSelectionChanged
+        context.coordinator.onSelectionEnded = onSelectionEnded
+        context.coordinator.onTwoFingerPan = onTwoFingerPan
+        context.coordinator.onPinchChanged = onPinchChanged
+        context.coordinator.onPinchEnded = onPinchEnded
+        context.coordinator.onDoubleTap = onDoubleTap
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onSelectionChanged: (CGPoint, CGPoint) -> Void
+        var onSelectionEnded: (CGPoint, CGPoint) -> Void
+        var onTwoFingerPan: (CGSize) -> Void
+        var onPinchChanged: (Double) -> Void
+        var onPinchEnded: (Double) -> Void
+        var onDoubleTap: (CGPoint) -> Void
+
+        private var selectionStart: CGPoint?
+
+        init(
+            onSelectionChanged: @escaping (CGPoint, CGPoint) -> Void,
+            onSelectionEnded: @escaping (CGPoint, CGPoint) -> Void,
+            onTwoFingerPan: @escaping (CGSize) -> Void,
+            onPinchChanged: @escaping (Double) -> Void,
+            onPinchEnded: @escaping (Double) -> Void,
+            onDoubleTap: @escaping (CGPoint) -> Void
+        ) {
+            self.onSelectionChanged = onSelectionChanged
+            self.onSelectionEnded = onSelectionEnded
+            self.onTwoFingerPan = onTwoFingerPan
+            self.onPinchChanged = onPinchChanged
+            self.onPinchEnded = onPinchEnded
+            self.onDoubleTap = onDoubleTap
+        }
+
+        @objc func handleSelection(_ recognizer: UIPanGestureRecognizer) {
+            guard let view = recognizer.view else {
+                return
+            }
+
+            let location = recognizer.location(in: view)
+
+            switch recognizer.state {
+            case .began:
+                selectionStart = location
+                onSelectionChanged(location, location)
+
+            case .changed:
+                if let selectionStart {
+                    onSelectionChanged(selectionStart, location)
+                }
+
+            case .ended:
+                if let selectionStart {
+                    onSelectionEnded(selectionStart, location)
+                }
+                selectionStart = nil
+
+            case .cancelled, .failed:
+                selectionStart = nil
+
+            default:
+                break
+            }
+        }
+
+        @objc func handleTwoFingerPan(_ recognizer: UIPanGestureRecognizer) {
+            guard let view = recognizer.view else {
+                return
+            }
+
+            switch recognizer.state {
+            case .began, .changed:
+                let translation = recognizer.translation(in: view)
+                if abs(translation.x) > 0.2 || abs(translation.y) > 0.2 {
+                    onTwoFingerPan(CGSize(width: translation.x, height: translation.y))
+                    recognizer.setTranslation(.zero, in: view)
+                }
+
+            default:
+                recognizer.setTranslation(.zero, in: view)
+            }
+        }
+
+        @objc func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
+            switch recognizer.state {
+            case .began, .changed:
+                onPinchChanged(Double(recognizer.scale))
+
+            case .ended:
+                onPinchEnded(Double(recognizer.scale))
+                recognizer.scale = 1.0
+
+            case .cancelled, .failed:
+                onPinchEnded(1.0)
+                recognizer.scale = 1.0
+
+            default:
+                break
+            }
+        }
+
+        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let view = recognizer.view else {
+                return
+            }
+            onDoubleTap(recognizer.location(in: view))
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            if let pan = gestureRecognizer as? UIPanGestureRecognizer {
+                if pan.minimumNumberOfTouches == 1 {
+                    return pan.numberOfTouches <= 1
+                }
+                if pan.minimumNumberOfTouches == 2 {
+                    return pan.numberOfTouches >= 2
+                }
+            }
+            return true
+        }
+    }
+}
+#endif
 
 #if os(macOS)
 typealias PlatformImage = NSImage
