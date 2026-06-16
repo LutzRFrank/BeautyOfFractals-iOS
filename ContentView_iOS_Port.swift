@@ -296,20 +296,44 @@ struct ContentView: View {
         )
     }
     
+    private var exportIterationCap: Int {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone ? 32_000 : 60_000
+        #else
+        80_000
+        #endif
+    }
+    
+    private var ultraExportIterationCap: Int {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone ? 48_000 : 90_000
+        #else
+        120_000
+        #endif
+    }
+    
+    private var isPhoneDevice: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone
+        #else
+        false
+        #endif
+    }
+    
     private var exportEffectiveIterations: Int {
         effectiveIterationCount(
             baseIterations: maxIterations,
             renderQuality: renderQuality,
             scale: scale,
             defaultScale: fractalMode.defaultScale,
-            cap: 80_000
+            cap: exportIterationCap
         )
     }
     
     private var ultraExportEffectiveIterations: Int {
         min(
-            Int(Double(exportEffectiveIterations) * 1.5),
-            120_000
+            Int(Double(exportEffectiveIterations) * (isPhoneDevice ? 1.25 : 1.5)),
+            ultraExportIterationCap
         )
     }
     
@@ -399,9 +423,10 @@ Deep 2D zooms automatically use High Precision Preview.
 At very deep zooms the app shows Near Limit or Extreme Zoom so precision artifacts are easier to recognize.
 
 Export menu:
-Normal exports render at the selected size.
-Ultra exports render internally at 2× resolution and downsample for cleaner images.
-Live preview is capped at 50,000 iterations; normal export at 80,000; Ultra export at 120,000.
+On iPhone the export choices are mobile optimized so deep zooms do not render forever.
+Fast Export uses 1440 × 900. Quality Export uses 1920 × 1200. Ultra Mobile renders 1440 × 900 internally at 2× and downsamples.
+On iPad and Mac the larger export sizes remain available.
+Live preview is capped dynamically; iPhone export caps are lower than Mac export caps.
 
 The zoom factor overlay is only visible in the app and is not included in exports.
 3D exports are CPU raymarched and may take longer.
@@ -478,6 +503,49 @@ The zoom factor overlay is only visible in the app and is not included in export
                     }
                     
                     Menu {
+                        #if os(iOS)
+                        if isPhoneDevice {
+                            Button("Fast Export 1440 × 900 PNG") {
+                                saveSnapshot(width: 1440, height: 900)
+                            }
+                            
+                            Button("Quality Export 1920 × 1200 PNG") {
+                                saveSnapshot(width: 1920, height: 1200)
+                            }
+                            
+                            Button("Max Export 2560 × 1600 PNG") {
+                                saveSnapshot(width: 2560, height: 1600)
+                            }
+                            
+                            Divider()
+                            
+                            Button("Ultra Mobile 1440 × 900 PNG · 2×") {
+                                saveSnapshot(width: 1440, height: 900, supersampling: 2)
+                            }
+                        } else {
+                            Button("Export 1440 × 900 PNG") {
+                                saveSnapshot(width: 1440, height: 900)
+                            }
+                            
+                            Button("Export 2560 × 1600 PNG") {
+                                saveSnapshot(width: 2560, height: 1600)
+                            }
+                            
+                            Button("Export 2880 × 1800 PNG") {
+                                saveSnapshot(width: 2880, height: 1800)
+                            }
+                            
+                            Divider()
+                            
+                            Button("Ultra Export 1440 × 900 PNG · 2×") {
+                                saveSnapshot(width: 1440, height: 900, supersampling: 2)
+                            }
+                            
+                            Button("Ultra Export 2560 × 1600 PNG · 2×") {
+                                saveSnapshot(width: 2560, height: 1600, supersampling: 2)
+                            }
+                        }
+                        #else
                         Button("Export 1440 × 900 PNG") {
                             saveSnapshot(width: 1440, height: 900)
                         }
@@ -499,6 +567,7 @@ The zoom factor overlay is only visible in the app and is not included in export
                         Button("Ultra Export 2560 × 1600 PNG · 2×") {
                             saveSnapshot(width: 2560, height: 1600, supersampling: 2)
                         }
+                        #endif
                     } label: {
                         if isSavingSnapshot {
                             Text("Rendering…")
@@ -645,7 +714,11 @@ The zoom factor overlay is only visible in the app and is not included in export
         let snapshotCenterX = centerX
         let snapshotCenterY = centerY
         let snapshotScale = scale
+        #if os(iOS)
+        let snapshotSupersampling = isPhoneDevice && exportWidth > 1440 ? 1 : max(1, min(supersampling, 2))
+        #else
         let snapshotSupersampling = max(1, min(supersampling, 2))
+        #endif
         let snapshotIterations = snapshotSupersampling > 1 ? ultraExportEffectiveIterations : exportEffectiveIterations
         let snapshotExportSuffix = snapshotSupersampling > 1 ? "-Ultra\(snapshotSupersampling)x" : ""
         let fileName = "BeautyOfFractals-\(snapshotMode.fileName)-\(snapshotPalette.fileName)-\(snapshotIterations)-iterations\(snapshotExportSuffix)-\(exportWidth)x\(exportHeight).png"
