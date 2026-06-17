@@ -1,3 +1,10 @@
+//
+//  ContentView_iOS_Port.swift
+//  BeautOfFractals
+//
+//  Created by Lutz-R. Frank on 16.06.2026.
+//
+
 import SwiftUI
 import CoreGraphics
 #if os(macOS)

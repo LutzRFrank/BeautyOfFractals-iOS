@@ -1,3 +1,10 @@
+//
+//  MetalMandelbrotView_iOS_Port.swift
+//  BeautOfFractals
+//
+//  Created by Lutz-R. Frank on 16.06.2026.
+//
+
 import SwiftUI
 import Metal
 import MetalKit
