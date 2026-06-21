@@ -22,6 +22,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
     let centerY: Double
     let scale: Double
     let maxIterations: Int
+    let viewportAspectRatio: Double?
     
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -75,6 +76,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
         context.coordinator.centerY = Float(centerY)
         context.coordinator.scale = Float(scale)
         context.coordinator.maxIterations = UInt32(maxIterations)
+        context.coordinator.viewportAspectRatio = viewportAspectRatio.map(Float.init)
         
         nsView.setNeedsDisplay(nsView.bounds)
     }
@@ -90,6 +92,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
         var centerY: Float = 0.0
         var scale: Float = 3.0
         var maxIterations: UInt32 = 300
+        var viewportAspectRatio: Float?
         
         struct Uniforms {
             var centerX: Float
@@ -142,7 +145,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
             
             let width = max(Float(view.drawableSize.width), 1.0)
             let height = max(Float(view.drawableSize.height), 1.0)
-            let aspectRatio = width / height
+            let aspectRatio = viewportAspectRatio ?? (width / height)
             
             var uniforms = Uniforms(
                 centerX: centerX,
