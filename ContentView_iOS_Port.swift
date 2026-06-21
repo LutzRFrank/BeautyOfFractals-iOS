@@ -1090,7 +1090,9 @@ struct MandelbrotView: View {
                             progressiveCPUPreview: useDeepCPUPreview,
                             refinementEnabled: !isInteractionPreviewActive,
                             renderEpoch: highPrecisionRenderEpoch,
-                            onImagePublished: { state in visibleHighPrecisionState = state }
+                            onImagePublished: { state in
+                                visibleHighPrecisionState = state
+                            }
                         )
                     }
 
@@ -1173,6 +1175,7 @@ struct MandelbrotView: View {
                 }
                 .padding(.top, topInfoPadding(viewWidth: geometry.size.width, safeTop: geometry.safeAreaInsets.top))
                 .padding(.horizontal, 18)
+
             }
             .contentShape(Rectangle())
             .onChange(of: navigationRevision) {
@@ -1675,7 +1678,7 @@ nonisolated func renderFractalSupersampled(
                     let sampleY = Double(py * factor + sy) + 0.5
                     
                     let x0 = centerX + (sampleX / Double(sampleWidth) - 0.5) * scale * aspectRatio
-                    let y0 = centerY + (0.5 - sampleY / Double(sampleHeight)) * scale
+                    let y0 = centerY + (sampleY / Double(sampleHeight) - 0.5) * scale
                     
                     let color: (r: Double, g: Double, b: Double)
                     
@@ -1755,7 +1758,7 @@ nonisolated func renderFractal(
         for px in 0..<width {
             if px.isMultiple(of: 64), Task.isCancelled { return nil }
             let x0 = centerX + ((Double(px) + 0.5) / Double(width) - 0.5) * scale * aspectRatio
-            let y0 = centerY + (0.5 - (Double(py) + 0.5) / Double(height)) * scale
+            let y0 = centerY + ((Double(py) + 0.5) / Double(height) - 0.5) * scale
             
             let color: (r: Double, g: Double, b: Double)
             
