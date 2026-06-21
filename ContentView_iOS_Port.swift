@@ -14,6 +14,9 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 import simd
+#if os(iOS)
+import WatchConnectivity
+#endif
 
 private let highPrecisionScaleLimit: Double = 0.006
 private let highPrecisionPreviewMaxPixelWidth: Int = 1800
@@ -23,6 +26,100 @@ private let deepCPUPreviewMaxPixelWidth: Int = 720
 private let deepCPUPreviewMaxPixelHeight: Int = 480
 private let deepCPUPreviewIterationCap: Int = 2_500
 private let refinementDebounceNanoseconds: UInt64 = 220_000_000
+
+#if os(iOS)
+final class WatchFractalMirrorBridge: NSObject, WCSessionDelegate {
+    static let shared = WatchFractalMirrorBridge()
+
+    private let session = WCSession.default
+    private var pendingContext: [String: Any]?
+    private var latestContext: [String: Any]?
+
+    private override init() {
+        super.init()
+        activate()
+    }
+
+    func activate() {
+        guard WCSession.isSupported() else { return }
+        session.delegate = self
+        session.activate()
+    }
+
+    func publish(image: UIImage, zoomText: String, statusText: String) {
+        guard let jpegData = makeWatchJPEG(from: image) else { return }
+
+        let context: [String: Any] = [
+            "fractalJPEG": jpegData,
+            "zoomText": zoomText,
+            "statusText": statusText,
+            "updatedAt": Date().timeIntervalSince1970
+        ]
+
+        latestContext = context
+        pendingContext = context
+        pushLatestContextIfPossible()
+    }
+
+    private func pushLatestContextIfPossible() {
+        guard session.activationState == .activated,
+              let context = pendingContext else { return }
+
+        do {
+            try session.updateApplicationContext(context)
+            pendingContext = nil
+        } catch {
+            // Keep the newest frame queued. The next activation or render retries it.
+        }
+    }
+
+    private func makeWatchJPEG(from image: UIImage) -> Data? {
+        let maximumSize = CGSize(width: 216, height: 384)
+        let sourceSize = image.size
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+
+        let scale = min(1, min(maximumSize.width / sourceSize.width,
+                               maximumSize.height / sourceSize.height))
+        let targetSize = CGSize(width: max(1, floor(sourceSize.width * scale)),
+                                height: max(1, floor(sourceSize.height * scale)))
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+
+        let thumbnail = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+
+        return thumbnail.jpegData(compressionQuality: 0.72)
+    }
+
+    func session(_ session: WCSession,
+                 activationDidCompleteWith activationState: WCSessionActivationState,
+                 error: Error?) {
+        DispatchQueue.main.async {
+            self.pushLatestContextIfPossible()
+        }
+    }
+
+    func sessionDidBecomeInactive(_ session: WCSession) { }
+
+    func sessionDidDeactivate(_ session: WCSession) {
+        session.activate()
+    }
+
+    func session(_ session: WCSession,
+                 didReceiveMessage message: [String: Any],
+                 replyHandler: @escaping ([String: Any]) -> Void) {
+        guard message["action"] as? String == "requestLatestFrame" else {
+            replyHandler([:])
+            return
+        }
+
+        replyHandler(latestContext ?? [:])
+    }
+}
+#endif
 
 enum FractalMode: Int, CaseIterable, Identifiable {
     case mandelbrot = 0
@@ -1053,6 +1150,27 @@ struct MandelbrotView: View {
         return useHighPrecisionPreview && frozenHighPrecisionState != nil ? "Preview held · release to refine" : "Preview · refining detail…"
     }
 
+    #if os(iOS)
+    private var watchPreviewStatusText: String {
+        if isInteractionPreviewActive {
+            return "Preview held"
+        }
+        return useHighPrecisionPreview ? "Preview · refining" : "Live preview"
+    }
+
+    private var watchPreviewRenderKey: String {
+        [
+            fractalMode.rawValue.description,
+            fractalPalette.rawValue.description,
+            String(format: "%.16f", centerX),
+            String(format: "%.16f", centerY),
+            String(format: "%.16f", scale),
+            effectiveIterations.description,
+            isInteractionPreviewActive.description
+        ].joined(separator: "|")
+    }
+    #endif
+
     private func topInfoPadding(viewWidth: CGFloat, safeTop: CGFloat) -> CGFloat {
         #if os(iOS)
         return viewWidth < 600 ? 96 : 36
@@ -1090,13 +1208,39 @@ struct MandelbrotView: View {
                             progressiveCPUPreview: useDeepCPUPreview,
                             refinementEnabled: !isInteractionPreviewActive,
                             renderEpoch: highPrecisionRenderEpoch,
-                            onImagePublished: { state in
+                            onImagePublished: { state, image in
                                 visibleHighPrecisionState = state
+                                #if os(iOS)
+                                WatchFractalMirrorBridge.shared.publish(
+                                    image: image,
+                                    zoomText: magnificationText,
+                                    statusText: precisionStatusText ?? "High Precision"
+                                )
+                                #endif
                             }
                         )
                     }
 
                     #if os(iOS)
+                    // A small CPU-rendered mirror arrives on the Watch even while the
+                    // iPhone is still showing Metal. The later high-precision frame
+                    // automatically replaces it through onImagePublished above.
+                    WatchMirrorPreviewPublisher(
+                        fractalMode: fractalMode,
+                        fractalPalette: fractalPalette,
+                        centerX: centerX,
+                        centerY: centerY,
+                        scale: scale,
+                        maxIterations: effectiveIterations,
+                        viewportAspectRatio: viewportAspectRatio,
+                        zoomText: magnificationText,
+                        statusText: watchPreviewStatusText,
+                        interactionActive: isInteractionPreviewActive,
+                        renderKey: watchPreviewRenderKey
+                    )
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+
                     MultiTouchGestureOverlay(
                         onSelectionChanged: { start, current in
                             if dragStart == nil { beginInteractionPreview() }
@@ -1288,6 +1432,99 @@ struct MandelbrotView: View {
 }
 
 #if os(iOS)
+/// Sends a lightweight CPU preview to Apple Watch for every settled iPhone viewport.
+/// It intentionally runs only after a short debounce and never while a gesture is active.
+private struct WatchMirrorPreviewPublisher: View {
+    let fractalMode: FractalMode
+    let fractalPalette: FractalPalette
+    let centerX: Double
+    let centerY: Double
+    let scale: Double
+    let maxIterations: Int
+    let viewportAspectRatio: Double
+    let zoomText: String
+    let statusText: String
+    let interactionActive: Bool
+    let renderKey: String
+
+    var body: some View {
+        Color.clear
+            .task(id: renderKey) {
+                await publishPreview()
+            }
+    }
+
+    @MainActor
+    private func publishPreview() async {
+        // 3D modes have their own ray-marcher. Mirror v2 keeps them on their
+        // last received frame rather than competing with the live 3D renderer.
+        guard !interactionActive,
+              fractalMode != .mandelbulb3D,
+              fractalMode != .mandelbox3D else {
+            return
+        }
+
+        do {
+            try await Task.sleep(nanoseconds: 180_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, !interactionActive else { return }
+
+        let aspect = max(viewportAspectRatio, 0.1)
+        let size: (width: Int, height: Int)
+        if aspect <= 1.0 {
+            let height = 384
+            size = (max(96, Int((Double(height) * aspect).rounded())), height)
+        } else {
+            let width = 216
+            size = (width, max(96, Int((Double(width) / aspect).rounded())))
+        }
+
+        // This is deliberately inexpensive: it is a watch-only preview, not a
+        // replacement for the visual iPhone renderer.
+        let previewIterations = min(max(300, Int((Double(maxIterations) * 0.18).rounded())), 1_200)
+        let mode = fractalMode
+        let palette = fractalPalette
+        let cx = centerX
+        let cy = centerY
+        let currentScale = scale
+        let key = renderKey
+
+        let worker = Task.detached(priority: .utility) {
+            renderFractal(
+                width: size.width,
+                height: size.height,
+                mode: mode,
+                palette: palette,
+                centerX: cx,
+                centerY: cy,
+                scale: currentScale,
+                maxIterations: previewIterations,
+                viewportAspectRatio: aspect
+            )
+        }
+
+        let image = await withTaskCancellationHandler(
+            operation: { await worker.value },
+            onCancel: { worker.cancel() }
+        )
+
+        guard !Task.isCancelled,
+              !interactionActive,
+              key == renderKey,
+              let image else {
+            return
+        }
+
+        WatchFractalMirrorBridge.shared.publish(
+            image: UIImage(cgImage: image),
+            zoomText: zoomText,
+            statusText: statusText
+        )
+    }
+}
+
 private struct MultiTouchGestureOverlay: UIViewRepresentable {
     let onSelectionChanged: (CGPoint, CGPoint) -> Void
     let onSelectionEnded: (CGPoint, CGPoint) -> Void
@@ -1538,7 +1775,7 @@ struct HighPrecisionFractalPreview: View {
     let progressiveCPUPreview: Bool
     let refinementEnabled: Bool
     let renderEpoch: UInt
-    let onImagePublished: (HighPrecisionViewportState) -> Void
+    let onImagePublished: (HighPrecisionViewportState, PlatformImage) -> Void
 
     @State private var image: PlatformImage?
     @State private var isRendering = false
@@ -1578,15 +1815,23 @@ struct HighPrecisionFractalPreview: View {
             let size = cappedRenderSize(for: viewSize, maxWidth: deepCPUPreviewMaxPixelWidth, maxHeight: deepCPUPreviewMaxPixelHeight)
             let iterations = max(300, min(fullIterations, deepCPUPreviewIterationCap))
             if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: iterations, requestID: requestID) {
-                self.image = makePlatformImage(image, width: size.width, height: size.height)
-                onImagePublished(HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: iterations))
+                let platformImage = makePlatformImage(image, width: size.width, height: size.height)
+                self.image = platformImage
+                onImagePublished(
+                    HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: iterations),
+                    platformImage
+                )
             }
         }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
         let size = cappedRenderSize(for: viewSize, maxWidth: highPrecisionPreviewMaxPixelWidth, maxHeight: highPrecisionPreviewMaxPixelHeight)
         if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: fullIterations, requestID: requestID) {
-            self.image = makePlatformImage(image, width: size.width, height: size.height)
-            onImagePublished(HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: fullIterations))
+            let platformImage = makePlatformImage(image, width: size.width, height: size.height)
+            self.image = platformImage
+            onImagePublished(
+                HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: fullIterations),
+                platformImage
+            )
         }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
         isRendering = false
