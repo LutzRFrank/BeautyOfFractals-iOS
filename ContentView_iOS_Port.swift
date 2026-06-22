@@ -1871,7 +1871,7 @@ struct HighPrecisionFractalPreview: View {
                     .background(.ultraThinMaterial.opacity(0.82))
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
-                    .padding(.top, 86)
+                    .padding(.top, 118)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
