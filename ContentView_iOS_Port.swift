@@ -1102,6 +1102,7 @@ struct MandelbrotView: View {
     @State private var panStartCenterY: Double = 0.0
     @State private var isInteractionPreviewActive = false
     @State private var visibleHighPrecisionState: HighPrecisionViewportState?
+    @State private var visibleHighPrecisionImage: PlatformImage?
     @State private var frozenHighPrecisionState: HighPrecisionViewportState?
     @State private var highPrecisionRenderEpoch: UInt = 0
     @State private var touchPanActive = false
@@ -1208,8 +1209,11 @@ struct MandelbrotView: View {
                             progressiveCPUPreview: useDeepCPUPreview,
                             refinementEnabled: !isInteractionPreviewActive,
                             renderEpoch: highPrecisionRenderEpoch,
+                            heldImage: visibleHighPrecisionState == state ? visibleHighPrecisionImage : nil,
                             onImagePublished: { state, image in
+                                guard state.centerX == currentViewportState.centerX && state.centerY == currentViewportState.centerY && state.scale == currentViewportState.scale else { return }
                                 visibleHighPrecisionState = state
+                                visibleHighPrecisionImage = image
                                 #if os(iOS)
                                 WatchFractalMirrorBridge.shared.publish(
                                     image: image,
@@ -1325,6 +1329,8 @@ struct MandelbrotView: View {
             .onChange(of: navigationRevision) {
                 highPrecisionRenderEpoch &+= 1
                 isInteractionPreviewActive = false
+                visibleHighPrecisionImage = nil
+                visibleHighPrecisionState = nil
                 frozenHighPrecisionState = nil
                 pinchStartScale = nil
             }
@@ -1775,6 +1781,7 @@ struct HighPrecisionFractalPreview: View {
     let progressiveCPUPreview: Bool
     let refinementEnabled: Bool
     let renderEpoch: UInt
+    let heldImage: PlatformImage?
     let onImagePublished: (HighPrecisionViewportState, PlatformImage) -> Void
 
     @State private var image: PlatformImage?
@@ -1790,11 +1797,11 @@ struct HighPrecisionFractalPreview: View {
     var body: some View {
         ZStack {
             Color.clear
-            if let image {
+            if let displayImage = image ?? heldImage {
                 #if os(macOS)
-                Image(nsImage: image).resizable().interpolation(.none).frame(width: viewSize.width, height: viewSize.height).clipped()
+                Image(nsImage: displayImage).resizable().interpolation(.none).frame(width: viewSize.width, height: viewSize.height).clipped()
                 #else
-                Image(uiImage: image).resizable().interpolation(.none).frame(width: viewSize.width, height: viewSize.height).clipped()
+                Image(uiImage: displayImage).resizable().interpolation(.none).frame(width: viewSize.width, height: viewSize.height).clipped()
                 #endif
             }
             if isRendering {
@@ -1808,6 +1815,9 @@ struct HighPrecisionFractalPreview: View {
     @MainActor private func renderPreview() async {
         guard refinementEnabled else { isRendering = false; return }
         let requestID = renderID, mode = fractalMode, palette = fractalPalette, cx = centerX, cy = centerY, currentScale = scale, fullIterations = maxIterations
+        if heldImage == nil {
+            image = nil
+        }
         isRendering = true
         do { try await Task.sleep(nanoseconds: refinementDebounceNanoseconds) } catch { return }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
@@ -1816,11 +1826,13 @@ struct HighPrecisionFractalPreview: View {
             let iterations = max(300, min(fullIterations, deepCPUPreviewIterationCap))
             if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: iterations, requestID: requestID) {
                 let platformImage = makePlatformImage(image, width: size.width, height: size.height)
-                self.image = platformImage
-                onImagePublished(
+                if self.image == nil && heldImage == nil {
+                    self.image = platformImage
+                    onImagePublished(
                     HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: iterations),
                     platformImage
-                )
+                    )
+                }
             }
         }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
