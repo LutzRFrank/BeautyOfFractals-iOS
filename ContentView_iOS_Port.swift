@@ -1786,12 +1786,35 @@ struct HighPrecisionFractalPreview: View {
 
     @State private var image: PlatformImage?
     @State private var isRendering = false
+    @State private var renderProgress: Double = 0.0
+    @State private var renderStartDate: Date?
 
     private var renderID: String {
         [fractalMode.rawValue.description, fractalPalette.rawValue.description,
          String(format: "%.18f", centerX), String(format: "%.18f", centerY), String(format: "%.18f", scale),
          maxIterations.description, Int(viewSize.width).description, Int(viewSize.height).description,
          progressiveCPUPreview.description, refinementEnabled.description, renderEpoch.description].joined(separator: "|")
+    }
+
+    private var clampedRenderProgress: Double {
+        min(max(renderProgress, 0.0), 1.0)
+    }
+
+    private var renderPercentText: String {
+        "\(Int((clampedRenderProgress * 100.0).rounded()))%"
+    }
+
+    private var renderIterationText: String {
+        let current = Int(Double(maxIterations) * clampedRenderProgress)
+        return "\(current.formatted()) / \(maxIterations.formatted())"
+    }
+
+    private func elapsedText(at date: Date) -> String {
+        guard let renderStartDate else { return "00:00.0" }
+        let elapsed = max(0, date.timeIntervalSince(renderStartDate))
+        let minutes = Int(elapsed) / 60
+        let seconds = elapsed.truncatingRemainder(dividingBy: 60)
+        return String(format: "%02d:%04.1f", minutes, seconds)
     }
 
     var body: some View {
@@ -1805,8 +1828,52 @@ struct HighPrecisionFractalPreview: View {
                 #endif
             }
             if isRendering {
-                VStack(spacing: 8) { ProgressView().controlSize(.small); Text("Rendering high precision…").font(.system(size: 12, weight: .medium, design: .rounded)) }
-                    .foregroundStyle(.white.opacity(0.8)).padding(.horizontal,14).padding(.vertical,10).background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                TimelineView(.periodic(from: .now, by: 0.25)) { timeline in
+                    VStack(spacing: 10) {
+                        ZStack {
+                            Circle()
+                                .stroke(.white.opacity(0.14), lineWidth: 11)
+
+                            Circle()
+                                .trim(from: 0, to: clampedRenderProgress)
+                                .stroke(
+                                    AngularGradient(colors: [.cyan, .blue, .cyan], center: .center),
+                                    style: StrokeStyle(lineWidth: 11, lineCap: .round)
+                                )
+                                .rotationEffect(.degrees(-90))
+
+                            VStack(spacing: 4) {
+                                Text("Rendering…")
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.78))
+
+                                Text(renderPercentText)
+                                    .font(.system(size: 27, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white)
+
+                                Text(renderIterationText)
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.72))
+
+                                Text("Iterations")
+                                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.56))
+                            }
+                        }
+                        .frame(width: 128, height: 128)
+
+                        Text("Elapsed: \(elapsedText(at: timeline.date))")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.72))
+                    }
+                    .padding(18)
+                    .frame(width: 188)
+                    .background(.ultraThinMaterial.opacity(0.82))
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+                    .padding(.top, 86)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
             }
         }
         .task(id: renderID) { await renderPreview() }
@@ -1818,6 +1885,8 @@ struct HighPrecisionFractalPreview: View {
         if heldImage == nil {
             image = nil
         }
+        renderProgress = 0.01
+        renderStartDate = Date()
         isRendering = true
         do { try await Task.sleep(nanoseconds: refinementDebounceNanoseconds) } catch { return }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
@@ -1858,8 +1927,13 @@ struct HighPrecisionFractalPreview: View {
                 ]
             }
 
-            for stage in previewStages {
+            for (stageIndex, stage) in previewStages.enumerated() {
                 guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
+
+                renderProgress = max(
+                    renderProgress,
+                    0.04 + 0.72 * (Double(stageIndex) / Double(max(previewStages.count, 1)))
+                )
 
                 let size = cappedRenderSize(for: viewSize, maxWidth: stage.width, maxHeight: stage.height)
                 let iterations = max(300, min(fullIterations, min(deepCPUPreviewIterationCap, Int(Double(fullIterations) * stage.iterationScale))))
@@ -1871,18 +1945,28 @@ struct HighPrecisionFractalPreview: View {
                         HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: iterations),
                         platformImage
                     )
+
+                    renderProgress = max(
+                        renderProgress,
+                        0.04 + 0.72 * (Double(stageIndex + 1) / Double(max(previewStages.count, 1)))
+                    )
                 }
             }
         }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
         let size = cappedRenderSize(for: viewSize, maxWidth: highPrecisionPreviewMaxPixelWidth, maxHeight: highPrecisionPreviewMaxPixelHeight)
-        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: fullIterations, requestID: requestID) {
+        renderProgress = max(renderProgress, 0.82)
+
+        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: fullIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995) {
             let platformImage = makePlatformImage(image, width: size.width, height: size.height)
             self.image = platformImage
             onImagePublished(
                 HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: fullIterations),
                 platformImage
             )
+
+            renderProgress = 1.0
+            do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { }
         }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
         isRendering = false
@@ -1896,9 +1980,31 @@ struct HighPrecisionFractalPreview: View {
         #endif
     }
 
-    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, maxIterations: Int, requestID: String) async -> CGImage? {
+    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, maxIterations: Int, requestID: String, progressStart: Double? = nil, progressEnd: Double? = nil) async -> CGImage? {
         let aspect = viewportAspectRatio
-        let worker = Task.detached(priority: .userInitiated) { renderFractal(width: width, height: height, mode: mode, palette: palette, centerX: centerX, centerY: centerY, scale: scale, maxIterations: maxIterations, viewportAspectRatio: aspect) }
+        let worker = Task.detached(priority: .userInitiated) {
+            renderFractal(
+                width: width,
+                height: height,
+                mode: mode,
+                palette: palette,
+                centerX: centerX,
+                centerY: centerY,
+                scale: scale,
+                maxIterations: maxIterations,
+                viewportAspectRatio: aspect,
+                progressCallback: { progress in
+                    guard let progressStart, let progressEnd else { return }
+                    Task { @MainActor in
+                        guard !Task.isCancelled, requestID == renderID else { return }
+                        renderProgress = max(
+                            renderProgress,
+                            progressStart + (progressEnd - progressStart) * progress
+                        )
+                    }
+                }
+            )
+        }
         let image = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return nil }
         return image
@@ -2038,7 +2144,8 @@ nonisolated func renderFractal(
     centerY: Double,
     scale: Double,
     maxIterations: Int,
-    viewportAspectRatio: Double? = nil
+    viewportAspectRatio: Double? = nil,
+    progressCallback: ((Double) -> Void)? = nil
 ) -> CGImage? {
     
     let bytesPerPixel = 4
@@ -2051,6 +2158,10 @@ nonisolated func renderFractal(
     
     for py in 0..<height {
         if Task.isCancelled { return nil }
+
+        if py.isMultiple(of: 8) {
+            progressCallback?(Double(py) / Double(max(height - 1, 1)))
+        }
         for px in 0..<width {
             if px.isMultiple(of: 64), Task.isCancelled { return nil }
             let x0 = centerX + ((Double(px) + 0.5) / Double(width) - 0.5) * scale * aspectRatio
@@ -2110,6 +2221,8 @@ nonisolated func renderFractal(
         }
     }
     
+    progressCallback?(1.0)
+
     return makeCGImage(
         pixels: pixels,
         width: width,
