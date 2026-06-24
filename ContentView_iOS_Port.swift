@@ -672,6 +672,10 @@ Pinch: zoom in and out
 
 Double tap: zoom in at tap position
 
+Use the star button to open Favorite Spots.
+Save Current View stores the current location with a thumbnail.
+Tap a saved spot to load it. Swipe left to delete.
+
 ⌥ Option + Drag: move the view on Mac
 
 + / -: zoom in and out
