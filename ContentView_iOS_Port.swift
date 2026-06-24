@@ -487,6 +487,35 @@ enum FavoriteSort: String, CaseIterable, Identifiable {
 }
 
 
+
+private func makeFavoriteThumbnailPNG(
+    mode: FractalMode,
+    palette: FractalPalette,
+    centerX: Double,
+    centerY: Double,
+    scale: Double,
+    iterations: Int,
+    viewportAspectRatio: Double = 16.0 / 10.0
+) -> Data? {
+    guard let image = renderFractal(
+        width: 220,
+        height: 138,
+        mode: mode,
+        palette: palette,
+        centerX: centerX,
+        centerY: centerY,
+        scale: scale,
+        maxIterations: max(300, min(iterations, 3_000)),
+        viewportAspectRatio: viewportAspectRatio
+    ) else {
+        return nil
+    }
+
+    let uiImage = UIImage(cgImage: image)
+    return uiImage.pngData()
+}
+
+
 struct ContentView: View {
     @State private var fractalMode: FractalMode = .mandelbrot
     @State private var fractalPalette: FractalPalette = .deepBlue
@@ -667,9 +696,45 @@ The zoom factor overlay is only visible in the app and is not included in export
         .sheet(isPresented: $showFavoritesPanel) {
             FavoritesSheet(
                 fractalMode: fractalMode,
-                favoritesStore: favoritesStore
+                favoritesStore: favoritesStore,
+                saveCurrentFavorite: saveCurrentFavorite,
+                loadFavorite: loadFavorite
             )
+            .presentationDetents([.medium, .large])
         }
+    }
+    
+    private func saveCurrentFavorite() {
+        let newSpot = FavoriteSpot(
+            name: "\(fractalMode.shortName) · \(formatMagnification(fractalMode.defaultScale / max(scale, 1e-18)))",
+            modeRawValue: fractalMode.rawValue,
+            paletteRawValue: fractalPalette.rawValue,
+            centerX: centerX,
+            centerY: centerY,
+            scale: scale,
+            iterations: maxIterations,
+            thumbnailPNG: makeFavoriteThumbnailPNG(
+                mode: fractalMode,
+                palette: fractalPalette,
+                centerX: centerX,
+                centerY: centerY,
+                scale: scale,
+                iterations: effectiveIterations
+            )
+        )
+        
+        favoritesStore.add(newSpot)
+    }
+    
+    private func loadFavorite(_ spot: FavoriteSpot) {
+        fractalMode = spot.mode
+        fractalPalette = spot.palette
+        centerX = spot.centerX
+        centerY = spot.centerY
+        scale = spot.scale
+        maxIterations = spot.iterations
+        favoritesStore.incrementUsage(for: spot)
+        showFavoritesPanel = false
     }
     
     private func controlsOverlay(isCompact: Bool) -> some View {
@@ -3241,23 +3306,74 @@ nonisolated private func clamp01(_ value: Double) -> Double {
 struct FavoritesSheet: View {
     let fractalMode: FractalMode
     @ObservedObject var favoritesStore: FavoritesStore
+    let saveCurrentFavorite: () -> Void
+    let loadFavorite: (FavoriteSpot) -> Void
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(favoritesStore.spots(for: fractalMode)) { spot in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(spot.name)
-                            .font(.headline)
-
-                        Text("\(spot.mode.displayName) · \(spot.zoomText)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                Section {
+                    Button {
+                        saveCurrentFavorite()
+                    } label: {
+                        Label("Save Current View", systemImage: "star.fill")
                     }
-                    .padding(.vertical, 4)
+                }
+                
+                Section("Saved Spots") {
+                    ForEach(favoritesStore.spots(for: fractalMode)) { spot in
+                        Button {
+                            loadFavorite(spot)
+                        } label: {
+                            HStack(spacing: 12) {
+                                if let data = spot.thumbnailPNG,
+                                   let image = UIImage(data: data) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 96, height: 60)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                } else {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(.thinMaterial)
+                                        .frame(width: 96, height: 60)
+                                        .overlay {
+                                            Image(systemName: "star")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(spot.name)
+                                        .font(.headline)
+
+                                    Text("\(spot.mode.displayName) · \(spot.zoomText)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                    .onDelete { offsets in
+                        let spots = favoritesStore.spots(for: fractalMode)
+                        for index in offsets {
+                            favoritesStore.delete(spots[index])
+                        }
+                    }
                 }
             }
             .navigationTitle("Favorite Spots")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }
