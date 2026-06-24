@@ -452,6 +452,17 @@ final class FavoritesStore: ObservableObject {
         save()
     }
 
+    func rename(_ spot: FavoriteSpot, to newName: String) {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              let index = spots.firstIndex(where: { $0.id == spot.id }) else {
+            return
+        }
+
+        spots[index].name = trimmedName
+        save()
+    }
+
     func incrementUsage(for spot: FavoriteSpot) {
         guard let index = spots.firstIndex(where: { $0.id == spot.id }) else {
             return
@@ -3313,6 +3324,8 @@ struct FavoritesSheet: View {
     let saveCurrentFavorite: () -> Void
     let loadFavorite: (FavoriteSpot) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var spotToRename: FavoriteSpot?
+    @State private var renameText: String = ""
 
     var body: some View {
         NavigationStack {
@@ -3352,7 +3365,7 @@ struct FavoritesSheet: View {
                                     Text(spot.name)
                                         .font(.headline)
 
-                                    Text("\(spot.mode.displayName) · \(spot.zoomText)")
+                                    Text("\(spot.zoomText) · \(spot.iterations.formatted()) iterations · \(spot.usageCount.formatted()) opens")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -3360,6 +3373,15 @@ struct FavoritesSheet: View {
                                 Spacer()
                             }
                             .padding(.vertical, 6)
+                        }
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            Button {
+                                spotToRename = spot
+                                renameText = spot.name
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            .tint(.blue)
                         }
                     }
                     .onDelete { offsets in
@@ -3371,6 +3393,27 @@ struct FavoritesSheet: View {
                 }
             }
             .navigationTitle("Favorite Spots")
+            .alert("Rename Favorite", isPresented: Binding(
+                get: { spotToRename != nil },
+                set: { if !$0 { spotToRename = nil } }
+            )) {
+                TextField("Name", text: $renameText)
+
+                Button("Cancel", role: .cancel) {
+                    spotToRename = nil
+                    renameText = ""
+                }
+
+                Button("Save") {
+                    if let spotToRename {
+                        favoritesStore.rename(spotToRename, to: renameText)
+                    }
+                    spotToRename = nil
+                    renameText = ""
+                }
+            } message: {
+                Text("Enter a new name for this favorite spot.")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") {
