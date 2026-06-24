@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreGraphics
+import Combine
 #if os(macOS)
 import AppKit
 import UniformTypeIdentifiers
@@ -393,6 +394,98 @@ private func effectiveIterationCount(
     let value = Double(baseIterations) * renderQuality.iterationMultiplier * zoomBoost
     return min(max(Int(value.rounded()), 300), cap)
 }
+
+
+struct FavoriteSpot: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var name: String
+    var modeRawValue: Int
+    var paletteRawValue: Int
+    var centerX: Double
+    var centerY: Double
+    var scale: Double
+    var iterations: Int
+    var created: Date = Date()
+    var thumbnailPNG: Data? = nil
+    var usageCount: Int = 0
+
+    var mode: FractalMode {
+        FractalMode(rawValue: modeRawValue) ?? .mandelbrot
+    }
+
+    var palette: FractalPalette {
+        FractalPalette(rawValue: paletteRawValue) ?? .deepBlue
+    }
+
+    var zoomText: String {
+        formatMagnification(mode.defaultScale / max(scale, 1e-18))
+    }
+}
+
+@MainActor
+final class FavoritesStore: ObservableObject {
+    @Published private(set) var spots: [FavoriteSpot] = []
+
+    private var fileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let folder = base.appendingPathComponent("BeautyOfFractals", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("FavoriteSpots-iOS.json")
+    }
+
+    init() {
+        load()
+    }
+
+    func spots(for mode: FractalMode) -> [FavoriteSpot] {
+        spots.filter { $0.mode == mode }
+            .sorted { $0.created > $1.created }
+    }
+
+    func add(_ spot: FavoriteSpot) {
+        spots.insert(spot, at: 0)
+        save()
+    }
+
+    func delete(_ spot: FavoriteSpot) {
+        spots.removeAll { $0.id == spot.id }
+        save()
+    }
+
+    func incrementUsage(for spot: FavoriteSpot) {
+        guard let index = spots.firstIndex(where: { $0.id == spot.id }) else {
+            return
+        }
+
+        spots[index].usageCount += 1
+        save()
+    }
+
+    private func load() {
+        guard let data = try? Data(contentsOf: fileURL),
+              let decoded = try? JSONDecoder().decode([FavoriteSpot].self, from: data) else {
+            spots = []
+            return
+        }
+        spots = decoded
+    }
+
+    private func save() {
+        guard let data = try? JSONEncoder().encode(spots) else { return }
+        try? data.write(to: fileURL, options: .atomic)
+    }
+}
+
+enum FavoriteSort: String, CaseIterable, Identifiable {
+    case newest = "Newest"
+    case mostUsed = "Most Used"
+    case name = "Name A–Z"
+    case zoom = "Zoom Level"
+    case iterations = "Iterations"
+
+    var id: String { rawValue }
+}
+
 
 struct ContentView: View {
     @State private var fractalMode: FractalMode = .mandelbrot
