@@ -499,6 +499,8 @@ struct ContentView: View {
     @State private var maxIterations: Int = 300
     @State private var isSavingSnapshot: Bool = false
     @State private var showHelp: Bool = false
+    @State private var showFavoritesPanel: Bool = false
+    @StateObject private var favoritesStore = FavoritesStore()
     @State private var navigationHistory: [ViewportSnapshot] = []
     @State private var navigationRevision: UInt = 0
 
@@ -662,6 +664,12 @@ The zoom factor overlay is only visible in the app and is not included in export
 3D exports are CPU raymarched and may take longer.
 """)
         }
+        .sheet(isPresented: $showFavoritesPanel) {
+            FavoritesSheet(
+                fractalMode: fractalMode,
+                favoritesStore: favoritesStore
+            )
+        }
     }
     
     private func controlsOverlay(isCompact: Bool) -> some View {
@@ -706,6 +714,13 @@ The zoom factor overlay is only visible in the app and is not included in export
                         Text(renderQuality.rawValue)
                             .lineLimit(1)
                     }
+                    
+                    Button {
+                        showFavoritesPanel = true
+                    } label: {
+                        Image(systemName: "star")
+                    }
+                    .accessibilityLabel("Favorite Spots")
                     
                     Button {
                         showHelp = true
@@ -3220,4 +3235,29 @@ nonisolated private func clamp(value: Double, minValue: Double, maxValue: Double
 
 nonisolated private func clamp01(_ value: Double) -> Double {
     min(1.0, max(0.0, value))
+}
+
+
+struct FavoritesSheet: View {
+    let fractalMode: FractalMode
+    @ObservedObject var favoritesStore: FavoritesStore
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(favoritesStore.spots(for: fractalMode)) { spot in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(spot.name)
+                            .font(.headline)
+
+                        Text("\(spot.mode.displayName) · \(spot.zoomText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .navigationTitle("Favorite Spots")
+        }
+    }
 }
