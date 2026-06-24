@@ -1308,7 +1308,7 @@ struct MandelbrotView: View {
     }
 
     private var effectiveIterations: Int {
-        effectiveIterationCount(baseIterations: maxIterations, renderQuality: renderQuality, scale: scale, defaultScale: fractalMode.defaultScale, cap: 50_000)
+        effectiveIterationCount(baseIterations: maxIterations, renderQuality: renderQuality, scale: scale, defaultScale: fractalMode.defaultScale, cap: 100_000)
     }
 
     private var interactionPreviewIterations: Int { max(300, min(effectiveIterations, Int(Double(effectiveIterations) * 0.25))) }
