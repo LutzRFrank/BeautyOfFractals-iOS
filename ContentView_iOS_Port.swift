@@ -3326,6 +3326,42 @@ struct FavoritesSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var spotToRename: FavoriteSpot?
     @State private var renameText: String = ""
+    @State private var favoriteSort: FavoriteSort = .newest
+
+    private var sortedSpots: [FavoriteSpot] {
+        let spots = favoritesStore.spots(for: fractalMode)
+
+        switch favoriteSort {
+        case .newest:
+            return spots.sorted { $0.created > $1.created }
+        case .mostUsed:
+            return spots.sorted {
+                if $0.usageCount == $1.usageCount {
+                    return $0.created > $1.created
+                }
+                return $0.usageCount > $1.usageCount
+            }
+        case .name:
+            return spots.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        case .zoom:
+            return spots.sorted {
+                (spotsZoomValue($0), $0.created) > (spotsZoomValue($1), $1.created)
+            }
+        case .iterations:
+            return spots.sorted {
+                if $0.iterations == $1.iterations {
+                    return $0.created > $1.created
+                }
+                return $0.iterations > $1.iterations
+            }
+        }
+    }
+
+    private func spotsZoomValue(_ spot: FavoriteSpot) -> Double {
+        spot.mode.defaultScale / max(spot.scale, 1e-18)
+    }
 
     var body: some View {
         NavigationStack {
@@ -3338,8 +3374,16 @@ struct FavoritesSheet: View {
                     }
                 }
                 
+                Section {
+                    Picker("Sort", selection: $favoriteSort) {
+                        ForEach(FavoriteSort.allCases) { sort in
+                            Text(sort.rawValue).tag(sort)
+                        }
+                    }
+                }
+                
                 Section("Saved Spots") {
-                    ForEach(favoritesStore.spots(for: fractalMode)) { spot in
+                    ForEach(sortedSpots) { spot in
                         Button {
                             loadFavorite(spot)
                         } label: {
@@ -3385,9 +3429,8 @@ struct FavoritesSheet: View {
                         }
                     }
                     .onDelete { offsets in
-                        let spots = favoritesStore.spots(for: fractalMode)
                         for index in offsets {
-                            favoritesStore.delete(spots[index])
+                            favoritesStore.delete(sortedSpots[index])
                         }
                     }
                 }
