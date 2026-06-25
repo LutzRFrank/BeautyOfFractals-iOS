@@ -3503,7 +3503,12 @@ struct FavoritesSheet: View {
                     Button {
                         isSyncingFavorites = true
                         _ = favoritesStore.syncWithCloud()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                            _ = favoritesStore.syncWithCloud()
+                        }
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
                             isSyncingFavorites = false
                         }
                     } label: {
