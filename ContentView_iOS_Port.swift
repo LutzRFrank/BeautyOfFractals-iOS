@@ -516,17 +516,28 @@ final class FavoritesStore: ObservableObject {
         spots = decoded
     }
 
-    func syncWithCloud() {
+    func syncWithCloud() -> Bool {
         guard let cloudFileURL else {
-            return
+            print("☁️ Favorites iCloud: container unavailable")
+            return false
         }
 
+        print("☁️ Favorites iCloud file:", cloudFileURL.path)
+
         let cloudSpots: [FavoriteSpot]
+        let cloudReadSucceeded: Bool
         if let data = try? Data(contentsOf: cloudFileURL),
            let cloudFile = try? JSONDecoder().decode(FavoriteSpotsCloudFile.self, from: data) {
             cloudSpots = cloudFile.favorites
+            cloudReadSucceeded = true
         } else {
             cloudSpots = []
+            cloudReadSucceeded = false
+        }
+
+        if spots.isEmpty && cloudSpots.isEmpty && !cloudReadSucceeded {
+            print("☁️ Favorites iCloud skipped empty overwrite because cloud read failed")
+            return false
         }
 
         var mergedByID: [UUID: FavoriteSpot] = [:]
@@ -547,7 +558,14 @@ final class FavoritesStore: ObservableObject {
             .sorted { $0.created > $1.created }
 
         saveLocalOnly()
-        saveCloudOnly()
+
+        if !spots.isEmpty || cloudReadSucceeded {
+            saveCloudOnly()
+        } else {
+            print("☁️ Favorites iCloud skipped cloud write because local store is empty")
+        }
+
+        return true
     }
 
     private func save() {
@@ -572,7 +590,12 @@ final class FavoritesStore: ObservableObject {
         )
 
         guard let data = try? JSONEncoder().encode(cloudFile) else { return }
-        try? data.write(to: cloudFileURL, options: .atomic)
+        do {
+            try data.write(to: cloudFileURL, options: .atomic)
+            print("☁️ Favorites iCloud wrote", spots.count, "spots to", cloudFileURL.path)
+        } catch {
+            print("☁️ Favorites iCloud write failed:", error)
+        }
     }
 }
 
@@ -3416,6 +3439,7 @@ struct FavoritesSheet: View {
     @State private var spotToRename: FavoriteSpot?
     @State private var renameText: String = ""
     @State private var favoriteSort: FavoriteSort = .newest
+    @State private var syncMessage: String?
 
     private var sortedSpots: [FavoriteSpot] {
         let spots = favoritesStore.spots(for: fractalMode)
@@ -3460,6 +3484,14 @@ struct FavoritesSheet: View {
                         saveCurrentFavorite()
                     } label: {
                         Label("Save Current View", systemImage: "star.fill")
+                    }
+
+                    Button {
+                        syncMessage = favoritesStore.syncWithCloud()
+                            ? "Synced with iCloud"
+                            : "iCloud is not available yet"
+                    } label: {
+                        Label("Sync with iCloud", systemImage: "icloud.and.arrow.down")
                     }
                 }
                 
@@ -3525,6 +3557,16 @@ struct FavoritesSheet: View {
                 }
             }
             .navigationTitle("Favorite Spots")
+            .alert("iCloud Sync", isPresented: Binding(
+                get: { syncMessage != nil },
+                set: { if !$0 { syncMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {
+                    syncMessage = nil
+                }
+            } message: {
+                Text(syncMessage ?? "")
+            }
             .alert("Rename Favorite", isPresented: Binding(
                 get: { spotToRename != nil },
                 set: { if !$0 { spotToRename = nil } }
