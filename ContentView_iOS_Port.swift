@@ -3489,7 +3489,6 @@ struct FavoritesSheet: View {
     @State private var spotToRename: FavoriteSpot?
     @State private var renameText: String = ""
     @State private var favoriteSort: FavoriteSort = .newest
-    @State private var syncMessage: String?
 
     private var sortedSpots: [FavoriteSpot] {
         let spots = favoritesStore.spots(for: fractalMode)
@@ -3537,9 +3536,7 @@ struct FavoritesSheet: View {
                     }
 
                     Button {
-                        syncMessage = favoritesStore.syncWithCloud()
-                            ? "Synced with iCloud"
-                            : "iCloud is not available yet"
+                        _ = favoritesStore.syncWithCloud()
                     } label: {
                         Label("Sync with iCloud", systemImage: "icloud.and.arrow.down")
                     }
@@ -3607,16 +3604,6 @@ struct FavoritesSheet: View {
                 }
             }
             .navigationTitle("Favorite Spots")
-            .alert("iCloud Sync", isPresented: Binding(
-                get: { syncMessage != nil },
-                set: { if !$0 { syncMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) {
-                    syncMessage = nil
-                }
-            } message: {
-                Text(syncMessage ?? "")
-            }
             .alert("Rename Favorite", isPresented: Binding(
                 get: { spotToRename != nil },
                 set: { if !$0 { spotToRename = nil } }
