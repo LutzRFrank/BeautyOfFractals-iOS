@@ -661,6 +661,11 @@ struct ContentView: View {
     @State private var centerX: Double = FractalMode.mandelbrot.defaultCenterX
     @State private var centerY: Double = FractalMode.mandelbrot.defaultCenterY
     @State private var scale: Double = FractalMode.mandelbrot.defaultScale
+    @State private var preciseViewport = PreciseViewport(
+        centerX: FractalMode.mandelbrot.defaultCenterX,
+        centerY: FractalMode.mandelbrot.defaultCenterY,
+        scale: FractalMode.mandelbrot.defaultScale
+    )
     
     @State private var maxIterations: Int = 300
     @State private var isSavingSnapshot: Bool = false
@@ -676,6 +681,7 @@ struct ContentView: View {
         let centerX: Double
         let centerY: Double
         let scale: Double
+        let preciseViewport: PreciseViewport
         let maxIterations: Int
     }
     #if os(iOS)
@@ -741,6 +747,7 @@ struct ContentView: View {
                 centerX: $centerX,
                 centerY: $centerY,
                 scale: $scale,
+                preciseViewport: $preciseViewport,
                 maxIterations: $maxIterations,
                 renderQuality: renderQuality,
                 navigationStarted: recordNavigationStep,
@@ -870,9 +877,13 @@ The zoom factor overlay is only visible in the app and is not included in export
     private func loadFavorite(_ spot: FavoriteSpot) {
         fractalMode = spot.mode
         fractalPalette = spot.palette
-        centerX = spot.centerX
-        centerY = spot.centerY
-        scale = spot.scale
+        applyPreciseViewport(
+            PreciseViewport(
+                centerX: spot.centerX,
+                centerY: spot.centerY,
+                scale: spot.scale
+            )
+        )
         maxIterations = spot.iterations
         favoritesStore.incrementUsage(for: spot)
         showFavoritesPanel = false
@@ -1118,11 +1129,21 @@ The zoom factor overlay is only visible in the app and is not included in export
         .frame(maxWidth: isCompact ? 360 : 980)
     }
     
+    private func applyPreciseViewport(_ viewport: PreciseViewport) {
+        preciseViewport = viewport
+
+        let projection = viewport.doubleProjection
+        centerX = projection.centerX
+        centerY = projection.centerY
+        scale = projection.scale
+    }
+
     private func currentViewportSnapshot() -> ViewportSnapshot {
         ViewportSnapshot(
             centerX: centerX,
             centerY: centerY,
             scale: scale,
+            preciseViewport: preciseViewport,
             maxIterations: maxIterations
         )
     }
@@ -1139,17 +1160,19 @@ The zoom factor overlay is only visible in the app and is not included in export
     private func undoView() {
         guard let previous = navigationHistory.popLast() else { return }
         navigationRevision &+= 1
-        centerX = previous.centerX
-        centerY = previous.centerY
-        scale = previous.scale
+        applyPreciseViewport(previous.preciseViewport)
         maxIterations = previous.maxIterations
     }
 
     private func setMode(_ mode: FractalMode) {
         fractalMode = mode
-        centerX = mode.defaultCenterX
-        centerY = mode.defaultCenterY
-        scale = mode.defaultScale
+        applyPreciseViewport(
+            PreciseViewport(
+                centerX: mode.defaultCenterX,
+                centerY: mode.defaultCenterY,
+                scale: mode.defaultScale
+            )
+        )
         maxIterations = 300
         navigationHistory.removeAll()
         navigationRevision &+= 1
@@ -1158,23 +1181,27 @@ The zoom factor overlay is only visible in the app and is not included in export
     private func zoomIn() {
         recordNavigationStep()
         navigationRevision &+= 1
-        scale *= 0.5
+        applyPreciseViewport(preciseViewport.zoomed(by: 0.5))
         increaseIterationsForZoom()
     }
     
     private func zoomOut() {
         recordNavigationStep()
         navigationRevision &+= 1
-        scale *= 2.0
+        applyPreciseViewport(preciseViewport.zoomed(by: 2.0))
         decreaseIterationsForZoom()
     }
     
     private func resetView() {
         recordNavigationStep()
         navigationRevision &+= 1
-        centerX = fractalMode.defaultCenterX
-        centerY = fractalMode.defaultCenterY
-        scale = fractalMode.defaultScale
+        applyPreciseViewport(
+            PreciseViewport(
+                centerX: fractalMode.defaultCenterX,
+                centerY: fractalMode.defaultCenterY,
+                scale: fractalMode.defaultScale
+            )
+        )
         maxIterations = 300
     }
     
@@ -1402,6 +1429,7 @@ struct MandelbrotView: View {
     @Binding var centerX: Double
     @Binding var centerY: Double
     @Binding var scale: Double
+    @Binding var preciseViewport: PreciseViewport
     @Binding var maxIterations: Int
     let renderQuality: RenderQuality
     let navigationStarted: () -> Void
@@ -1409,11 +1437,10 @@ struct MandelbrotView: View {
 
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
-    @State private var pinchStartScale: Double?
+    @State private var pinchStartViewport: PreciseViewport?
     @State private var isOptionPressed: Bool = false
     @State private var isPanning: Bool = false
-    @State private var panStartCenterX: Double = -0.5
-    @State private var panStartCenterY: Double = 0.0
+    @State private var panStartPreciseViewport: PreciseViewport?
     @State private var isInteractionPreviewActive = false
     @State private var visibleHighPrecisionState: HighPrecisionViewportState?
     @State private var visibleHighPrecisionImage: PlatformImage?
@@ -1563,7 +1590,7 @@ struct MandelbrotView: View {
                     MultiTouchGestureOverlay(
                         onSelectionChanged: { start, current in
                             if dragStart == nil { beginInteractionPreview() }
-                            pinchStartScale = nil
+                            pinchStartViewport = nil
                             isPanning = false
                             dragStart = start
                             dragCurrent = current
@@ -1582,7 +1609,7 @@ struct MandelbrotView: View {
                             navigationStarted()
                         },
                         onTwoFingerPan: { delta in
-                            pinchStartScale = nil
+                            pinchStartViewport = nil
                             panBy(delta: delta, viewSize: geometry.size)
                         },
                         onTwoFingerPanEnded: {
@@ -1591,17 +1618,19 @@ struct MandelbrotView: View {
                         },
                         onPinchChanged: { rawFactor in
                             resetDragState()
-                            if pinchStartScale == nil {
+                            if pinchStartViewport == nil {
                                 beginInteractionPreview()
                                 navigationStarted()
-                                pinchStartScale = scale
+                                pinchStartViewport = preciseViewport
                             }
-                            guard let pinchStartScale else { return }
+                            guard let pinchStartViewport else { return }
                             let factor = max(0.05, 1 + (rawFactor - 1) * 0.28)
-                            scale = max(pinchStartScale / factor, 1e-15)
+                            applyPreciseViewport(
+                                pinchStartViewport.zoomed(by: 1.0 / factor)
+                            )
                         },
                         onPinchEnded: { rawFactor in
-                            defer { pinchStartScale = nil; finishInteractionPreview() }
+                            defer { pinchStartViewport = nil; finishInteractionPreview() }
                             let factor = max(0.05, 1 + (rawFactor - 1) * 0.28)
                             if factor > 1.05 { increaseIterationsForZoom() }
                             else if factor < 0.95 { decreaseIterationsForZoom() }
@@ -1648,7 +1677,7 @@ struct MandelbrotView: View {
                 visibleHighPrecisionImage = nil
                 visibleHighPrecisionState = nil
                 frozenHighPrecisionState = nil
-                pinchStartScale = nil
+                pinchStartViewport = nil
             }
             #if os(macOS)
             .onAppear {
@@ -1673,9 +1702,17 @@ struct MandelbrotView: View {
             let visible = visibleHighPrecisionState ?? currentViewportState
             frozenHighPrecisionState = visible
             // Navigation must be computed from the frame the user can actually see.
-            centerX = visible.centerX
-            centerY = visible.centerY
-            scale = visible.scale
+            if visible.centerX != centerX ||
+                visible.centerY != centerY ||
+                visible.scale != scale {
+                applyPreciseViewport(
+                    PreciseViewport(
+                        centerX: visible.centerX,
+                        centerY: visible.centerY,
+                        scale: visible.scale
+                    )
+                )
+            }
         }
         isInteractionPreviewActive = true
     }
@@ -1692,7 +1729,8 @@ struct MandelbrotView: View {
                 if dragStart == nil {
                     beginInteractionPreview()
                     dragStart = value.startLocation; dragCurrent = value.location
-                    isPanning = isOptionPressed; panStartCenterX = centerX; panStartCenterY = centerY
+                    isPanning = isOptionPressed
+                    panStartPreciseViewport = preciseViewport
                     if isPanning { navigationStarted() }
                 }
                 guard let start = dragStart else { return }
@@ -1709,27 +1747,60 @@ struct MandelbrotView: View {
     }
 
     private var selectionRect: CGRect? { guard let start = dragStart, let current = dragCurrent else { return nil }; return makeRect(from: start, to: current) }
-    private func resetDragState() { dragStart = nil; dragCurrent = nil; isPanning = false }
+    private func resetDragState() {
+        dragStart = nil
+        dragCurrent = nil
+        isPanning = false
+        panStartPreciseViewport = nil
+    }
     private func makeRect(from start: CGPoint, to end: CGPoint) -> CGRect { CGRect(x: min(start.x,end.x), y: min(start.y,end.y), width: abs(end.x-start.x), height: abs(end.y-start.y)) }
 
     private func panView(from start: CGPoint, to current: CGPoint, viewSize: CGSize) {
-        let transform = FractalViewportTransform(centerX: panStartCenterX, centerY: panStartCenterY, scale: scale, viewSize: viewSize)
-        let center = transform.centerAfterPan(from: start, to: current)
-        centerX = center.x; centerY = center.y; dragCurrent = current
+        guard let startViewport = panStartPreciseViewport else { return }
+
+        let width = max(Double(viewSize.width), 1.0)
+        let height = max(Double(viewSize.height), 1.0)
+
+        applyPreciseViewport(
+            startViewport.panned(
+                horizontalFraction: Double(current.x - start.x) / width,
+                verticalFraction: Double(current.y - start.y) / height,
+                aspectRatio: width / height
+            )
+        )
+        dragCurrent = current
     }
 
     private func panBy(delta: CGSize, viewSize: CGSize) {
-        let transform = FractalViewportTransform(centerX: centerX, centerY: centerY, scale: scale, viewSize: viewSize)
-        let center = transform.centerAfterPan(from: .zero, to: CGPoint(x: delta.width, y: delta.height))
-        centerX = center.x; centerY = center.y
+        let width = max(Double(viewSize.width), 1.0)
+        let height = max(Double(viewSize.height), 1.0)
+
+        applyPreciseViewport(
+            preciseViewport.panned(
+                horizontalFraction: Double(delta.width) / width,
+                verticalFraction: Double(delta.height) / height,
+                aspectRatio: width / height
+            )
+        )
     }
 
     private func zoomToSelection(rect: CGRect, viewSize: CGSize) {
-        let oldScale = scale
-        let transform = FractalViewportTransform(centerX: centerX, centerY: centerY, scale: oldScale, viewSize: viewSize)
-        let newCenter = transform.complexPoint(at: CGPoint(x: rect.midX, y: rect.midY))
-        let factor = max(Double(rect.width) / max(Double(viewSize.width),1), Double(rect.height) / max(Double(viewSize.height),1))
-        centerX = newCenter.x; centerY = newCenter.y; scale = oldScale * factor; increaseIterationsForZoom()
+        let width = max(Double(viewSize.width), 1.0)
+        let height = max(Double(viewSize.height), 1.0)
+        let factor = max(
+            Double(rect.width) / width,
+            Double(rect.height) / height
+        )
+
+        applyPreciseViewport(
+            preciseViewport.zoomed(
+                toHorizontalFraction: Double(rect.midX) / width,
+                verticalFraction: Double(rect.midY) / height,
+                aspectRatio: width / height,
+                zoomFactor: factor
+            )
+        )
+        increaseIterationsForZoom()
     }
 
     private func increaseIterationsForZoom() {
@@ -1741,15 +1812,40 @@ struct MandelbrotView: View {
         maxIterations = max(maxIterations, 300)
     }
     private func zoomAt(location: CGPoint, factor: Double, viewSize: CGSize) {
-        let transform = FractalViewportTransform(centerX: centerX, centerY: centerY, scale: scale, viewSize: viewSize)
-        let point = transform.complexPoint(at: location)
-        let newScale = max(scale / factor, 1e-15)
-        let width = max(Double(viewSize.width), 1), height = max(Double(viewSize.height), 1)
-        let nx = Double(location.x)/width - 0.5, ny = Double(location.y)/height - 0.5
-        centerX = point.x - nx * newScale * (width / height)
-        centerY = point.y - ny * newScale
-        scale = newScale
+        let width = max(Double(viewSize.width), 1.0)
+        let height = max(Double(viewSize.height), 1.0)
+        let aspectRatio = width / height
+        let horizontalFraction = Double(location.x) / width
+        let verticalFraction = Double(location.y) / height
+
+        let point = preciseViewport.complexPoint(
+            horizontalFraction: horizontalFraction,
+            verticalFraction: verticalFraction,
+            aspectRatio: aspectRatio
+        )
+
+        let newScale = preciseViewport.scale * (1.0 / factor)
+        let horizontalOffset = (horizontalFraction - 0.5) * aspectRatio
+        let verticalOffset = verticalFraction - 0.5
+
+        applyPreciseViewport(
+            PreciseViewport(
+                centerX: point.x - newScale * horizontalOffset,
+                centerY: point.y - newScale * verticalOffset,
+                scale: newScale
+            )
+        )
+
         if factor > 1 { increaseIterationsForZoom() } else if factor < 1 { decreaseIterationsForZoom() }
+    }
+
+    private func applyPreciseViewport(_ viewport: PreciseViewport) {
+        preciseViewport = viewport
+
+        let projection = viewport.doubleProjection
+        centerX = projection.centerX
+        centerY = projection.centerY
+        scale = projection.scale
     }
 }
 
@@ -2204,11 +2300,12 @@ struct HighPrecisionFractalPreview: View {
                             showRenderStatus.toggle()
                         } label: {
                             Image(systemName: showRenderStatus ? "pin.fill" : "pin")
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(
-                                    .white.opacity(showRenderStatus ? 0.92 : 0.50)
+                                    .white.opacity(showRenderStatus ? 0.92 : 0.58)
                                 )
-                                .padding(10)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
