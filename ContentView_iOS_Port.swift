@@ -1451,6 +1451,7 @@ struct MandelbrotView: View {
     @State private var visibleHighPrecisionImage: PlatformImage?
     @State private var frozenHighPrecisionState: HighPrecisionViewportState?
     @State private var highPrecisionRenderEpoch: UInt = 0
+    @State private var isHighPrecisionRenderCancelled = false
     @State private var touchPanActive = false
 
     #if os(macOS)
@@ -1470,15 +1471,6 @@ struct MandelbrotView: View {
 
     private var precisionStatusText: String? {
         guard fractalMode.supportsHighPrecisionPreview else { return nil }
-
-        let usesDoubleDoubleFinalPass =
-            fractalMode == .mandelbrot &&
-            scale < doubleDoubleMandelbrotScaleLimit &&
-            effectiveIterations >= 8_000
-
-        if usesDoubleDoubleFinalPass {
-            return "High Precision · Double-Double Final Pass"
-        }
         if useDeepCPUPreview { return "High Precision · CPU Deep Zoom" }
         if magnificationFactor >= 50_000_000_000 { return "High Precision · Extreme Zoom" }
         if magnificationFactor >= 10_000_000_000 { return "High Precision · Near Limit" }
@@ -1562,7 +1554,12 @@ struct MandelbrotView: View {
                             viewSize: geometry.size,
                             viewportAspectRatio: viewportAspectRatio,
                             progressiveCPUPreview: useDeepCPUPreview,
-                            refinementEnabled: !isInteractionPreviewActive,
+                            refinementEnabled: !isInteractionPreviewActive && !isHighPrecisionRenderCancelled,
+                            renderCancelled: isHighPrecisionRenderCancelled,
+                            onCancelRender: {
+                                highPrecisionRenderEpoch &+= 1
+                                isHighPrecisionRenderCancelled = true
+                            },
                             renderEpoch: highPrecisionRenderEpoch,
                             heldImage: visibleHighPrecisionState == state ? visibleHighPrecisionImage : nil,
                             onImagePublished: { state, image in
@@ -1687,6 +1684,7 @@ struct MandelbrotView: View {
             .contentShape(Rectangle())
             .onChange(of: navigationRevision) {
                 highPrecisionRenderEpoch &+= 1
+                isHighPrecisionRenderCancelled = false
                 isInteractionPreviewActive = false
                 visibleHighPrecisionImage = nil
                 visibleHighPrecisionState = nil
@@ -1711,6 +1709,7 @@ struct MandelbrotView: View {
     }
 
     private func beginInteractionPreview() {
+        isHighPrecisionRenderCancelled = false
         highPrecisionRenderEpoch &+= 1
         if useHighPrecisionPreview {
             let visible = visibleHighPrecisionState ?? currentViewportState
@@ -2206,6 +2205,8 @@ struct HighPrecisionFractalPreview: View {
     let viewportAspectRatio: Double
     let progressiveCPUPreview: Bool
     let refinementEnabled: Bool
+    let renderCancelled: Bool
+    let onCancelRender: () -> Void
     let renderEpoch: UInt
     let heldImage: PlatformImage?
     let onImagePublished: (HighPrecisionViewportState, PlatformImage) -> Void
@@ -2280,7 +2281,7 @@ struct HighPrecisionFractalPreview: View {
                                 .rotationEffect(.degrees(-90))
 
                             VStack(spacing: 4) {
-                                Text(isRendering ? "Rendering…" : "Ready")
+                                Text(renderCancelled ? "Cancelled" : (isRendering ? "Rendering…" : "Ready"))
                                     .font(.system(size: 11, weight: .medium, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.78))
 
@@ -2300,15 +2301,35 @@ struct HighPrecisionFractalPreview: View {
                         .frame(width: 128, height: 128)
 
                         Text(
-                            isRendering
-                                ? "Elapsed: \(elapsedText(at: timeline.date))"
-                                : "Render time: \(lastRenderDurationText ?? "—")"
+                            renderCancelled
+                                ? "Preview kept"
+                                : (isRendering
+                                    ? "Elapsed: \(elapsedText(at: timeline.date))"
+                                    : "Render time: \(lastRenderDurationText ?? "—")")
                         )
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.72))
                     }
                     .padding(18)
                     .frame(width: 188)
+                    .overlay(alignment: .topLeading) {
+                        if isRendering {
+                            Button {
+                                showRenderStatus = true
+                                onCancelRender()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.88))
+                                    .frame(width: 30, height: 30)
+                                    .background(.black.opacity(0.22), in: Circle())
+                                    .contentShape(Circle())
+                            }
+                            .frame(width: 44, height: 44)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Cancel render")
+                        }
+                    }
                     .overlay(alignment: .topTrailing) {
                         Button {
                             showRenderStatus.toggle()
@@ -2322,11 +2343,14 @@ struct HighPrecisionFractalPreview: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(
+                            showRenderStatus ? "Unpin render status" : "Pin render status"
+                        )
                     }
                     .background(.ultraThinMaterial.opacity(0.82))
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
-                    .padding(.top, 118)
+                    .padding(.top, 130)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
