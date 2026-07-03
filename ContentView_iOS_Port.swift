@@ -22,6 +22,11 @@ import WatchConnectivity
 private let highPrecisionScaleLimit: Double = 0.006
 private let highPrecisionPreviewMaxPixelWidth: Int = 1800
 private let highPrecisionPreviewMaxPixelHeight: Int = 1200
+// Double-Double is reserved for the final Mandelbrot CPU frame at truly
+// extreme zoom. Preview stages remain fast Direct Double renders.
+private let doubleDoubleMandelbrotScaleLimit: Double = 1e-10
+private let doubleDoublePreviewMaxPixelWidth: Int = 960
+private let doubleDoublePreviewMaxPixelHeight: Int = 640
 private let deepCPUPreviewScaleLimit: Double = 0.00001
 private let deepCPUPreviewMaxPixelWidth: Int = 720
 private let deepCPUPreviewMaxPixelHeight: Int = 480
@@ -1465,6 +1470,15 @@ struct MandelbrotView: View {
 
     private var precisionStatusText: String? {
         guard fractalMode.supportsHighPrecisionPreview else { return nil }
+
+        let usesDoubleDoubleFinalPass =
+            fractalMode == .mandelbrot &&
+            scale < doubleDoubleMandelbrotScaleLimit &&
+            effectiveIterations >= 8_000
+
+        if usesDoubleDoubleFinalPass {
+            return "High Precision · Double-Double Final Pass"
+        }
         if useDeepCPUPreview { return "High Precision · CPU Deep Zoom" }
         if magnificationFactor >= 50_000_000_000 { return "High Precision · Extreme Zoom" }
         if magnificationFactor >= 10_000_000_000 { return "High Precision · Near Limit" }
@@ -3503,23 +3517,34 @@ nonisolated private func complexDiv(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> S
 }
 
 nonisolated private func formatMagnification(_ value: Double) -> String {
-    if value < 1_000 {
-        return "×\(String(format: "%.0f", value))"
+    guard value.isFinite, value > 0 else {
+        return "×0"
     }
-    
-    if value < 1_000_000 {
-        return "×\(String(format: "%.1f", value / 1_000.0))K"
+
+    let units: [(threshold: Double, suffix: String)] = [
+        (1e15, "Qa"),
+        (1e12, "T"),
+        (1e9, "B"),
+        (1e6, "M"),
+        (1e3, "K")
+    ]
+
+    for unit in units where value >= unit.threshold {
+        let scaled = value / unit.threshold
+        let decimals: Int
+
+        if scaled >= 100 {
+            decimals = 0
+        } else if scaled >= 10 {
+            decimals = 1
+        } else {
+            decimals = 2
+        }
+
+        return "×\(String(format: "%.*f", decimals, scaled)) \(unit.suffix)"
     }
-    
-    if value < 1_000_000_000 {
-        return "×\(String(format: "%.1f", value / 1_000_000.0))M"
-    }
-    
-    if value < 1_000_000_000_000 {
-        return "×\(String(format: "%.1f", value / 1_000_000_000.0))B"
-    }
-    
-    return "×\(String(format: "%.2e", value))"
+
+    return "×\(String(format: "%.0f", value))"
 }
 
 nonisolated private func makeCGImage(
