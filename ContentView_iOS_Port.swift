@@ -1537,6 +1537,7 @@ struct MandelbrotView: View {
                                 #endif
                             }
                         )
+                        .zIndex(2)
                     }
 
                     #if os(iOS)
@@ -1614,6 +1615,7 @@ struct MandelbrotView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
+                    .zIndex(1)
                     #endif
                 }
 
@@ -2100,8 +2102,10 @@ struct HighPrecisionFractalPreview: View {
 
     @State private var image: PlatformImage?
     @State private var isRendering = false
+    @State private var showRenderStatus = false
     @State private var renderProgress: Double = 0.0
     @State private var renderStartDate: Date?
+    @State private var lastRenderDurationText: String?
 
     private var renderID: String {
         [fractalMode.rawValue.description, fractalPalette.rawValue.description,
@@ -2133,15 +2137,24 @@ struct HighPrecisionFractalPreview: View {
 
     var body: some View {
         ZStack {
-            Color.clear
             if let displayImage = image ?? heldImage {
                 #if os(macOS)
-                Image(nsImage: displayImage).resizable().interpolation(.none).frame(width: viewSize.width, height: viewSize.height).clipped()
+                Image(nsImage: displayImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .frame(width: viewSize.width, height: viewSize.height)
+                    .clipped()
+                    .allowsHitTesting(false)
                 #else
-                Image(uiImage: displayImage).resizable().interpolation(.none).frame(width: viewSize.width, height: viewSize.height).clipped()
+                Image(uiImage: displayImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .frame(width: viewSize.width, height: viewSize.height)
+                    .clipped()
+                    .allowsHitTesting(false)
                 #endif
             }
-            if isRendering {
+            if isRendering || showRenderStatus {
                 TimelineView(.periodic(from: .now, by: 0.25)) { timeline in
                     VStack(spacing: 10) {
                         ZStack {
@@ -2157,7 +2170,7 @@ struct HighPrecisionFractalPreview: View {
                                 .rotationEffect(.degrees(-90))
 
                             VStack(spacing: 4) {
-                                Text("Rendering…")
+                                Text(isRendering ? "Rendering…" : "Ready")
                                     .font(.system(size: 11, weight: .medium, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.78))
 
@@ -2176,12 +2189,29 @@ struct HighPrecisionFractalPreview: View {
                         }
                         .frame(width: 128, height: 128)
 
-                        Text("Elapsed: \(elapsedText(at: timeline.date))")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.72))
+                        Text(
+                            isRendering
+                                ? "Elapsed: \(elapsedText(at: timeline.date))"
+                                : "Render time: \(lastRenderDurationText ?? "—")"
+                        )
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
                     }
                     .padding(18)
                     .frame(width: 188)
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            showRenderStatus.toggle()
+                        } label: {
+                            Image(systemName: showRenderStatus ? "pin.fill" : "pin")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(
+                                    .white.opacity(showRenderStatus ? 0.92 : 0.50)
+                                )
+                                .padding(10)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     .background(.ultraThinMaterial.opacity(0.82))
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
@@ -2201,6 +2231,7 @@ struct HighPrecisionFractalPreview: View {
         }
         renderProgress = 0.01
         renderStartDate = Date()
+        lastRenderDurationText = nil
         isRendering = true
         do { try await Task.sleep(nanoseconds: refinementDebounceNanoseconds) } catch { return }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
@@ -2283,6 +2314,7 @@ struct HighPrecisionFractalPreview: View {
             do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { }
         }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
+        lastRenderDurationText = elapsedText(at: Date())
         isRendering = false
     }
 
