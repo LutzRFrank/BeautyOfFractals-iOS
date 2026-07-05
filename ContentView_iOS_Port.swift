@@ -722,6 +722,8 @@ struct ContentView: View {
     }
     #if os(iOS)
     @State private var exportURL: URL?
+    @State private var controlsAreCollapsed = false
+    @State private var controlsActivityRevision: UInt = 0
     #endif
     
     private var effectiveIterations: Int {
@@ -775,6 +777,104 @@ struct ContentView: View {
         )
     }
     
+    #if os(iOS)
+    private func showControls() {
+        guard isPhoneDevice else { return }
+
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+            controlsAreCollapsed = false
+        }
+        controlsActivityRevision &+= 1
+    }
+
+    private func hideControls() {
+        guard isPhoneDevice else { return }
+
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+            controlsAreCollapsed = true
+        }
+    }
+
+    private var controlsHandle: some View {
+        Capsule()
+            .fill(.white.opacity(0.64))
+            .frame(width: 34, height: 5)
+            .frame(width: 68, height: 28)
+            .background {
+                Capsule()
+                    .fill(.black.opacity(0.28))
+                    .background {
+            Capsule()
+                .fill(.white.opacity(0.16))
+            .background(Color.clear, in: Capsule())
+        }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                controlsAreCollapsed ? showControls() : hideControls()
+            }
+            .gesture(
+                DragGesture(minimumDistance: 3)
+                    .onEnded { value in
+                        if value.translation.height > 18 {
+                            hideControls()
+                        } else if value.translation.height < -12 {
+                            showControls()
+                        }
+                    }
+            )
+            .accessibilityLabel(
+                controlsAreCollapsed ? "Show controls" : "Hide controls"
+            )
+    }
+
+    private func controlsDrawer(isCompact: Bool) -> some View {
+        VStack(spacing: 0) {
+            if controlsAreCollapsed {
+                controlsHandle
+            } else {
+                controlsOverlay(
+                    isCompact: isCompact,
+                    topInset: isCompact ? 28 : 32
+                )
+                .overlay(alignment: .top) {
+                    controlsHandle
+                        .padding(.top, 3)
+                }
+                .transition(
+                    .move(edge: .bottom)
+                        .combined(with: .opacity)
+                )
+            }
+        }
+        .animation(
+            .spring(response: 0.30, dampingFraction: 0.84),
+            value: controlsAreCollapsed
+        )
+        .task(id: controlsActivityRevision) {
+            guard isPhoneDevice else { return }
+
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            hideControls()
+        }
+        .onChange(of: maxIterations) {
+            showControls()
+        }
+        .onChange(of: fractalPalette) {
+            showControls()
+        }
+        .onChange(of: renderQuality) {
+            showControls()
+        }
+    }
+    #endif
+
     var body: some View {
         ZStack(alignment: .bottom) {
             MandelbrotView(
@@ -795,6 +895,29 @@ struct ContentView: View {
             .ignoresSafeArea()
             
             GeometryReader { proxy in
+                #if os(iOS)
+                if isPhoneDevice {
+                    controlsDrawer(isCompact: proxy.size.width < 600)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, proxy.safeAreaInsets.bottom + 8)
+                        .frame(maxWidth: 360)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: .bottom
+                        )
+                } else {
+                    controlsOverlay(isCompact: proxy.size.width < 600)
+                        .padding(.horizontal, proxy.size.width < 600 ? 10 : 40)
+                        .padding(.bottom, proxy.safeAreaInsets.bottom + (proxy.size.width < 600 ? 10 : 18))
+                        .frame(maxWidth: proxy.size.width < 600 ? 360 : 980)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: .bottom
+                        )
+                }
+                #else
                 controlsOverlay(isCompact: proxy.size.width < 600)
                     .padding(.horizontal, proxy.size.width < 600 ? 10 : 40)
                     .padding(.bottom, proxy.safeAreaInsets.bottom + (proxy.size.width < 600 ? 10 : 18))
@@ -804,6 +927,7 @@ struct ContentView: View {
                         maxHeight: .infinity,
                         alignment: .bottom
                     )
+                #endif
             }
             .allowsHitTesting(true)
         }
@@ -933,7 +1057,10 @@ The zoom factor overlay is only visible in the app and is not included in export
         }
     }
 
-    private func controlsOverlay(isCompact: Bool) -> some View {
+    private func controlsOverlay(
+        isCompact: Bool,
+        topInset: CGFloat = 0
+    ) -> some View {
         VStack(spacing: isCompact ? 5 : 7) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: isCompact ? 6 : 8) {
@@ -1180,6 +1307,7 @@ The zoom factor overlay is only visible in the app and is not included in export
         .buttonStyle(.bordered)
         .controlSize(isCompact ? .small : .regular)
         .padding(isCompact ? 8 : 10)
+        .padding(.top, topInset)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: isCompact ? 20 : 24, style: .continuous))
         .shadow(color: .black.opacity(0.35), radius: 18, x: 0, y: 8)
