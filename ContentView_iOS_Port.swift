@@ -137,6 +137,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
     case mandelbrotRelief = 6
     case mandelbox3D = 7
     case newton = 8
+    case eightRainbows = 9
+    case celtic = 10
     
     var id: Int {
         rawValue
@@ -162,6 +164,10 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Mandelbox 3D"
         case .newton:
             return "Newton Fractal"
+        case .eightRainbows:
+            return "Eight Rainbows"
+        case .celtic:
+            return "Celtic Mandelbrot"
         }
     }
     
@@ -185,6 +191,10 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Mandelbox"
         case .newton:
             return "Newton"
+        case .eightRainbows:
+            return "Rainbows"
+        case .celtic:
+            return "Celtic"
         }
     }
     
@@ -208,6 +218,10 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Mandelbox3D"
         case .newton:
             return "Newton"
+        case .eightRainbows:
+            return "EightRainbows"
+        case .celtic:
+            return "CelticMandelbrot"
         }
     }
     
@@ -231,6 +245,10 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return 0.0
         case .newton:
             return 0.0
+        case .eightRainbows:
+            return 0.0
+        case .celtic:
+            return -0.5
         }
     }
     
@@ -253,6 +271,10 @@ enum FractalMode: Int, CaseIterable, Identifiable {
         case .mandelbox3D:
             return 0.0
         case .newton:
+            return 0.0
+        case .eightRainbows:
+            return 0.0
+        case .celtic:
             return 0.0
         }
     }
@@ -277,12 +299,16 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return 2.8
         case .newton:
             return 3.2
+        case .eightRainbows:
+            return 3.0
+        case .celtic:
+            return 3.0
         }
     }
     
     var supportsHighPrecisionPreview: Bool {
         switch self {
-        case .mandelbrot, .mandelbrotRelief, .julia, .burningShip, .tricorn, .kleinian, .newton:
+        case .mandelbrot, .mandelbrotRelief, .julia, .burningShip, .tricorn, .kleinian, .newton, .eightRainbows, .celtic:
             return true
         case .mandelbulb3D, .mandelbox3D:
             return false
@@ -301,6 +327,7 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
     case solarCoral = 7
     case infernoCoral = 8
     case solarPop = 9
+    case rainbows = 10
     
     var id: Int {
         rawValue
@@ -328,6 +355,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "Inferno Coral"
         case .solarPop:
             return "Solar Pop"
+        case .rainbows:
+            return "Rainbows"
         }
     }
     
@@ -353,6 +382,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "InfernoCoral"
         case .solarPop:
             return "SolarPop"
+        case .rainbows:
+            return "Rainbows"
         }
     }
 }
@@ -894,18 +925,39 @@ The zoom factor overlay is only visible in the app and is not included in export
         showFavoritesPanel = false
     }
     
+    private func modeMenuButton(_ mode: FractalMode) -> some View {
+        Button {
+            setMode(mode)
+        } label: {
+            Text("\(fractalMode == mode ? "✓ " : "   ")\(mode.displayName)")
+        }
+    }
+
     private func controlsOverlay(isCompact: Bool) -> some View {
         VStack(spacing: isCompact ? 5 : 7) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: isCompact ? 6 : 8) {
                     Menu {
-                        ForEach(FractalMode.allCases) { mode in
-                            Button {
-                                setMode(mode)
-                            } label: {
-                                Text("\(fractalMode == mode ? "✓ " : "   ")\(mode.displayName)")
-                            }
-                        }
+                        modeMenuButton(.mandelbrot)
+                        modeMenuButton(.celtic)
+                        modeMenuButton(.julia)
+                        modeMenuButton(.eightRainbows)
+
+                        Divider()
+
+                        modeMenuButton(.burningShip)
+                        modeMenuButton(.tricorn)
+                        modeMenuButton(.kleinian)
+                        modeMenuButton(.mandelbrotRelief)
+
+                        Divider()
+
+                        modeMenuButton(.mandelbulb3D)
+                        modeMenuButton(.mandelbox3D)
+
+                        Divider()
+
+                        modeMenuButton(.newton)
                     } label: {
                         Text(fractalMode.shortName)
                             .lineLimit(1)
@@ -1170,6 +1222,17 @@ The zoom factor overlay is only visible in the app and is not included in export
     }
 
     private func setMode(_ mode: FractalMode) {
+        switch mode {
+        case .julia, .newton:
+            fractalPalette = .solarPop
+        case .mandelbrot, .tricorn, .celtic:
+            fractalPalette = .deepBlue
+        case .eightRainbows:
+            fractalPalette = .rainbows
+        default:
+            break
+        }
+
         fractalMode = mode
         applyPreciseViewport(
             PreciseViewport(
@@ -2215,6 +2278,7 @@ struct HighPrecisionFractalPreview: View {
     @State private var isRendering = false
     @State private var showRenderStatus = false
     @State private var renderProgress: Double = 0.0
+    @State private var completedRenderIterations: Int?
     @State private var renderStartDate: Date?
     @State private var lastRenderDurationText: String?
 
@@ -2234,8 +2298,23 @@ struct HighPrecisionFractalPreview: View {
     }
 
     private var renderIterationText: String {
+        if !isRendering, let completedRenderIterations {
+            return "\(completedRenderIterations.formatted()) / \(maxIterations.formatted())"
+        }
+
         let current = Int(Double(maxIterations) * clampedRenderProgress)
         return "\(current.formatted()) / \(maxIterations.formatted())"
+    }
+
+    private var renderIterationCaption: String {
+        guard fractalMode == .celtic,
+              !isRendering,
+              let completedRenderIterations,
+              completedRenderIterations < maxIterations else {
+            return "Iterations"
+        }
+
+        return "Atmospheric Finish"
     }
 
     private func elapsedText(at date: Date) -> String {
@@ -2293,7 +2372,7 @@ struct HighPrecisionFractalPreview: View {
                                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.72))
 
-                                Text("Iterations")
+                                Text(renderIterationCaption)
                                     .font(.system(size: 10, weight: .medium, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.56))
                             }
@@ -2361,10 +2440,13 @@ struct HighPrecisionFractalPreview: View {
     @MainActor private func renderPreview() async {
         guard refinementEnabled else { isRendering = false; return }
         let requestID = renderID, mode = fractalMode, palette = fractalPalette, cx = centerX, cy = centerY, currentScale = scale, fullIterations = maxIterations
+        var finalRenderIterations = fullIterations
+
         if heldImage == nil {
             image = nil
         }
         renderProgress = 0.01
+        completedRenderIterations = nil
         renderStartDate = Date()
         lastRenderDurationText = nil
         isRendering = true
@@ -2407,6 +2489,26 @@ struct HighPrecisionFractalPreview: View {
                 ]
             }
 
+            let usesAtmosphericFinish =
+                mode == .celtic
+                && (palette == .rainbows || palette == .solarPop)
+
+            if usesAtmosphericFinish, let lastPreviewStage = previewStages.last {
+                finalRenderIterations = max(
+                    300,
+                    min(
+                        fullIterations,
+                        min(
+                            deepCPUPreviewIterationCap,
+                            Int(
+                                Double(fullIterations)
+                                    * lastPreviewStage.iterationScale
+                            )
+                        )
+                    )
+                )
+            }
+
             for (stageIndex, stage) in previewStages.enumerated() {
                 guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
 
@@ -2437,14 +2539,15 @@ struct HighPrecisionFractalPreview: View {
         let size = cappedRenderSize(for: viewSize, maxWidth: highPrecisionPreviewMaxPixelWidth, maxHeight: highPrecisionPreviewMaxPixelHeight)
         renderProgress = max(renderProgress, 0.82)
 
-        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: fullIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995) {
+        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: finalRenderIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995) {
             let platformImage = makePlatformImage(image, width: size.width, height: size.height)
             self.image = platformImage
             onImagePublished(
-                HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: fullIterations),
+                HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: finalRenderIterations),
                 platformImage
             )
 
+            completedRenderIterations = finalRenderIterations
             renderProgress = 1.0
             do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { }
         }
@@ -3173,6 +3276,15 @@ nonisolated private func calculateNewtonColor(
         } else {
             rootColor = (1.00, 0.94, 0.74)
         }
+
+    case .rainbows:
+        if nearestRootIndex == 0 {
+            rootColor = (1.00, 0.08, 0.16)
+        } else if nearestRootIndex == 1 {
+            rootColor = (0.05, 0.62, 1.00)
+        } else {
+            rootColor = (0.72, 0.12, 1.00)
+        }
     }
     
     let background = 0.05 + 0.12 * edge
@@ -3218,7 +3330,7 @@ nonisolated private func calculateFractalIteration(
     var cy: Double
     
     switch mode {
-    case .mandelbrot, .mandelbrotRelief:
+    case .mandelbrot, .mandelbrotRelief, .celtic, .eightRainbows:
         x = 0.0
         y = 0.0
         cx = x0
@@ -3263,6 +3375,20 @@ nonisolated private func calculateFractalIteration(
             let xtemp = x * x - y * y + cx
             y = 2.0 * x * y + cy
             x = xtemp
+
+        case .celtic:
+            let realSquared = x * x - y * y
+            let imaginarySquared = 2.0 * x * y
+            x = abs(realSquared) + cx
+            y = imaginarySquared + cy
+
+        case .eightRainbows:
+            let x2 = x * x - y * y
+            let y2 = 2.0 * x * y
+            let x4 = x2 * x2 - y2 * y2
+            let y4 = 2.0 * x2 * y2
+            x = x4 * x4 - y4 * y4 + cx
+            y = 2.0 * x4 * y4 + cy
             
         case .burningShip:
             let ax = abs(x)
@@ -3433,6 +3559,28 @@ nonisolated private func paletteBaseColor(
             clamp01(0.01 + 0.10 * warmBody + 0.04 * ember + 0.04 * detail - 0.20 * darkFiligree)
         )
         
+    case .rainbows:
+        let phase = (
+            0.08
+            + 5.20 * pow(relief, 0.58)
+            + 0.72 * ridge
+            + 0.35 * glow
+        ).truncatingRemainder(dividingBy: 1.0)
+
+        let h6 = phase * 6.0
+        let red = clamp01(abs(h6 - 3.0) - 1.0)
+        let green = clamp01(2.0 - abs(h6 - 2.0))
+        let blue = clamp01(2.0 - abs(h6 - 4.0))
+
+        let brightness = 0.58 + 0.48 * pow(relief, 0.32) + 0.18 * glow
+        let sparkle = 0.10 + 0.20 * pow(ridge, 1.60)
+
+        return (
+            clamp01(red * brightness + sparkle),
+            clamp01(green * brightness + sparkle),
+            clamp01(blue * brightness + sparkle)
+        )
+
     case .solarPop:
         // Solar Pop:
         // high-contrast lemon, ivory, coral-red and charcoal bands.
@@ -3518,6 +3666,8 @@ nonisolated private func insideColor(
             return (0.075, 0.020, 0.010)
         case .solarPop:
             return (0.090, 0.040, 0.018)
+        case .rainbows:
+            return (0.018, 0.008, 0.065)
         }
     }
     
