@@ -955,52 +955,50 @@ struct ContentView: View {
             reset: resetView
         ))
         #endif
+        #if os(iOS)
+        .sheet(isPresented: $showHelp) {
+            HelpSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        #else
         .alert("Controls", isPresented: $showHelp) {
             Button("OK", role: .cancel) { }
         } message: {
             Text("""
-Choose a fractal mode from the Mode menu:
-Mandelbrot, Mandelbrot Relief, Julia, Burning Ship, Tricorn, Kleinian Relief, Mandelbulb 3D, Mandelbox 3D or Newton Fractal.
+Modes:
+Explore Mandelbrot, Celtic Mandelbrot, Julia, Eight Rainbows, Burning Ship, Tricorn, Kleinian Relief, Mandelbrot Relief, Mandelbulb 3D, Mandelbox 3D and Newton Fractal.
 
-Choose a color palette from the Palette menu:
-Ocean, Electric, Fire, Ice, Gold, Violet or Deep Blue.
+Palettes:
+Choose a palette from the Palette menu. Available palettes depend on the selected mode.
+Julia supports Solar Pop and Rainbows. Eight Rainbows opens with the Rainbows palette.
 
-Choose render quality from the Quality menu:
-Fast, High or Deep. Deep renders more detail at high zooms.
+Quality and iterations:
+Choose Fast, High or Deep. Quality and zoom depth adjust the effective iteration budget shown below the controls.
+Deep 2D locations use High Precision Preview automatically. At extreme zoom levels, CPU Deep Zoom progressively refines the image.
 
-Drag: select an area and zoom in
+Navigation:
+Drag to select an area and zoom in.
+⌥ Option + Drag moves the view.
++ / − zoom in and out.
+⌘R resets the current mode.
+⌘⇧P shows or hides render status.
 
-2-finger drag: move the view on iPhone and iPad
-
-Pinch: zoom in and out
-
-Double tap: zoom in at tap position
-
+Favorites:
 Use the star button to open Favorite Spots.
-Save Current View stores the current location with a thumbnail.
-Tap a saved spot to load it. Swipe left to delete.
+Saving a view preserves its mode, palette, location, zoom, iteration setting and thumbnail.
 
-⌥ Option + Drag: move the view on Mac
+Export:
+⌘S exports a 2560 × 1600 PNG.
+Normal exports render at the selected size.
+Ultra exports render internally at 2× resolution and downsample for cleaner detail.
+Live preview is capped at 50,000 iterations; normal export at 80,000; Ultra export at 120,000.
 
-+ / -: zoom in and out
-
-⌘R: reset view
-
-⌘S: export 2560 × 1600 PNG
-
-Deep 2D zooms automatically use High Precision Preview.
-At very deep zooms the app shows Near Limit or Extreme Zoom so precision artifacts are easier to recognize.
-
-Export menu:
-On iPhone the export choices are mobile optimized so deep zooms do not render forever.
-Fast Export uses 1440 × 900. Quality Export uses 1920 × 1200. Ultra Mobile renders 1440 × 900 internally at 2× and downsamples.
-On iPad and Mac the larger export sizes remain available.
-Live preview is capped dynamically; iPhone export caps are lower than Mac export caps.
-
-The zoom factor overlay is only visible in the app and is not included in exports.
+The zoom overlay is visible only in the app and is not included in exports.
 3D exports are CPU raymarched and may take longer.
 """)
         }
+        #endif
         .sheet(isPresented: $showFavoritesPanel) {
             FavoritesSheet(
                 fractalMode: fractalMode,
@@ -3899,6 +3897,152 @@ nonisolated private func clamp01(_ value: Double) -> Double {
     min(1.0, max(0.0, value))
 }
 
+
+
+#if os(iOS)
+private struct HelpScrollBottomPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct HelpSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var isAtBottom = false
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { viewport in
+                ScrollView(showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 22) {
+                        HelpSection(
+                            title: "Modes",
+                            content: """
+Explore Mandelbrot, Celtic Mandelbrot, Julia, Eight Rainbows, Burning Ship, Tricorn, Kleinian Relief, Mandelbrot Relief, Mandelbulb 3D, Mandelbox 3D and Newton Fractal.
+"""
+                        )
+
+                        HelpSection(
+                            title: "Palettes",
+                            content: """
+Available palettes depend on the selected mode.
+
+Julia supports Solar Pop and Rainbows. Eight Rainbows starts with the Rainbows palette.
+"""
+                        )
+
+                        HelpSection(
+                            title: "Quality and precision",
+                            content: """
+Fast, High and Deep adjust the effective iteration budget shown in the controls.
+
+Deep 2D locations use High Precision automatically. At extreme zoom levels, CPU Deep Zoom progressively refines the image.
+"""
+                        )
+
+                        HelpSection(
+                            title: "Navigation",
+                            content: """
+Drag to select an area and zoom in.
+Use two fingers to move the view.
+Pinch to zoom. Double-tap to zoom at that position.
+"""
+                        )
+
+                        HelpSection(
+                            title: "Controls",
+                            content: """
+On iPhone, controls collapse after a short pause. Tap or pull up the handle to show them again.
+"""
+                        )
+
+                        HelpSection(
+                            title: "Favorites",
+                            content: """
+Use the star button to open Favorite Spots.
+
+A saved spot preserves its mode, palette, location, zoom, base iteration setting and thumbnail. Tap a spot to load it. Swipe left to delete it.
+"""
+                        )
+
+                        HelpSection(
+                            title: "Export",
+                            content: """
+On iPhone, exports are optimized for mobile rendering time.
+
+Fast Export uses 1440 × 900. Quality Export uses 1920 × 1200. Ultra Mobile renders 1440 × 900 internally at 2× and downsamples for cleaner detail.
+
+iPad supports the larger export sizes. The zoom overlay is visible only in the app and is not included in exports.
+
+3D exports are CPU raymarched and may take longer.
+"""
+                        )
+                    }
+                    .padding(20)
+                    .padding(.bottom, 44)
+                    .background {
+                        GeometryReader { content in
+                            Color.clear.preference(
+                                key: HelpScrollBottomPreferenceKey.self,
+                                value: content.frame(in: .named("helpScroll")).maxY
+                            )
+                        }
+                    }
+                }
+                .coordinateSpace(name: "helpScroll")
+                .overlay(alignment: .bottom) {
+                    if !isAtBottom {
+                        Label("More below", systemImage: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding(.bottom, 10)
+                            .allowsHitTesting(false)
+                            .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                    }
+                }
+                .onPreferenceChange(HelpScrollBottomPreferenceKey.self) { contentBottom in
+                    let reachesBottom = contentBottom <= viewport.size.height + 8
+
+                    guard reachesBottom != isAtBottom else { return }
+
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        isAtBottom = reachesBottom
+                    }
+                }
+            }
+            .navigationTitle("Controls")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct HelpSection: View {
+    let title: String
+    let content: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .font(.headline)
+
+            Text(content)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+#endif
 
 struct FavoritesSheet: View {
     let fractalMode: FractalMode
