@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Foundation
 import CoreGraphics
 import Combine
 #if os(macOS)
@@ -22,9 +23,9 @@ import WatchConnectivity
 private let highPrecisionScaleLimit: Double = 0.006
 private let highPrecisionPreviewMaxPixelWidth: Int = 1800
 private let highPrecisionPreviewMaxPixelHeight: Int = 1200
-// Double-Double is reserved for the final Mandelbrot CPU frame at truly
-// extreme zoom. Preview stages remain fast Direct Double renders.
-private let doubleDoubleMandelbrotScaleLimit: Double = 1e-10
+// Double-Double is reserved for the final Mandelbrot CPU frame when Double
+// pixel spacing approaches coordinate ULP resolution. Preview stages remain
+// fast Direct Double renders.
 private let doubleDoublePreviewMaxPixelWidth: Int = 960
 private let doubleDoublePreviewMaxPixelHeight: Int = 640
 private let deepCPUPreviewScaleLimit: Double = 0.00001
@@ -439,6 +440,23 @@ private func effectiveIterationCount(
     
     let value = Double(baseIterations) * renderQuality.iterationMultiplier * zoomBoost
     return min(max(Int(value.rounded()), 300), cap)
+}
+
+nonisolated private func shouldUseDoubleDoubleMandelbrotFinalRender(
+    mode: FractalMode,
+    preciseViewport: PreciseViewport?,
+    renderedPixelHeight: Int
+) -> Bool {
+    guard mode == .mandelbrot, let preciseViewport else { return false }
+
+    let pixelScale = abs(preciseViewport.scale.hi) / Double(max(renderedPixelHeight, 1))
+    let coordinateMagnitude = max(
+        abs(preciseViewport.centerX.hi),
+        abs(preciseViewport.centerY.hi),
+        1.0
+    )
+
+    return pixelScale <= coordinateMagnitude.ulp * 4.0
 }
 
 
@@ -1577,6 +1595,7 @@ struct HighPrecisionViewportState: Equatable {
     let centerX: Double
     let centerY: Double
     let scale: Double
+    let preciseViewport: PreciseViewport
     let iterations: Int
 }
 
@@ -1638,7 +1657,13 @@ struct MandelbrotView: View {
     private var metalDisplayedIterations: Int { isInteractionPreviewActive ? interactionPreviewIterations : effectiveIterations }
 
     private var currentViewportState: HighPrecisionViewportState {
-        HighPrecisionViewportState(centerX: centerX, centerY: centerY, scale: scale, iterations: effectiveIterations)
+        HighPrecisionViewportState(
+            centerX: centerX,
+            centerY: centerY,
+            scale: scale,
+            preciseViewport: preciseViewport,
+            iterations: effectiveIterations
+        )
     }
 
     private var highPrecisionDisplayState: HighPrecisionViewportState {
@@ -1703,6 +1728,7 @@ struct MandelbrotView: View {
                             centerX: state.centerX,
                             centerY: state.centerY,
                             scale: state.scale,
+                            preciseViewport: state.preciseViewport,
                             maxIterations: state.iterations,
                             viewSize: geometry.size,
                             viewportAspectRatio: viewportAspectRatio,
@@ -2368,6 +2394,7 @@ struct HighPrecisionFractalPreview: View {
     let centerX: Double
     let centerY: Double
     let scale: Double
+    let preciseViewport: PreciseViewport
     let maxIterations: Int
     let viewSize: CGSize
     let viewportAspectRatio: Double
@@ -2390,6 +2417,9 @@ struct HighPrecisionFractalPreview: View {
     private var renderID: String {
         [fractalMode.rawValue.description, fractalPalette.rawValue.description,
          String(format: "%.18f", centerX), String(format: "%.18f", centerY), String(format: "%.18f", scale),
+         String(format: "%.18e", preciseViewport.centerX.hi), String(format: "%.18e", preciseViewport.centerX.lo),
+         String(format: "%.18e", preciseViewport.centerY.hi), String(format: "%.18e", preciseViewport.centerY.lo),
+         String(format: "%.18e", preciseViewport.scale.hi), String(format: "%.18e", preciseViewport.scale.lo),
          maxIterations.description, Int(viewSize.width).description, Int(viewSize.height).description,
          progressiveCPUPreview.description, refinementEnabled.description, renderEpoch.description].joined(separator: "|")
     }
@@ -2544,7 +2574,7 @@ struct HighPrecisionFractalPreview: View {
 
     @MainActor private func renderPreview() async {
         guard refinementEnabled else { isRendering = false; return }
-        let requestID = renderID, mode = fractalMode, palette = fractalPalette, cx = centerX, cy = centerY, currentScale = scale, fullIterations = maxIterations
+        let requestID = renderID, mode = fractalMode, palette = fractalPalette, cx = centerX, cy = centerY, currentScale = scale, requestPreciseViewport = preciseViewport, fullIterations = maxIterations
         var finalRenderIterations = fullIterations
 
         if heldImage == nil {
@@ -2625,11 +2655,17 @@ struct HighPrecisionFractalPreview: View {
                 let size = cappedRenderSize(for: viewSize, maxWidth: stage.width, maxHeight: stage.height)
                 let iterations = max(300, min(fullIterations, min(deepCPUPreviewIterationCap, Int(Double(fullIterations) * stage.iterationScale))))
 
-                if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: iterations, requestID: requestID) {
+                if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, preciseViewport: requestPreciseViewport, maxIterations: iterations, requestID: requestID) {
                     let platformImage = makePlatformImage(image, width: size.width, height: size.height)
                     self.image = platformImage
                     onImagePublished(
-                        HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: iterations),
+                        HighPrecisionViewportState(
+                            centerX: cx,
+                            centerY: cy,
+                            scale: currentScale,
+                            preciseViewport: requestPreciseViewport,
+                            iterations: iterations
+                        ),
                         platformImage
                     )
 
@@ -2641,14 +2677,36 @@ struct HighPrecisionFractalPreview: View {
             }
         }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
-        let size = cappedRenderSize(for: viewSize, maxWidth: highPrecisionPreviewMaxPixelWidth, maxHeight: highPrecisionPreviewMaxPixelHeight)
+        let normalFinalSize = cappedRenderSize(
+            for: viewSize,
+            maxWidth: highPrecisionPreviewMaxPixelWidth,
+            maxHeight: highPrecisionPreviewMaxPixelHeight
+        )
+        let usesDoubleDoubleFinalRender = shouldUseDoubleDoubleMandelbrotFinalRender(
+            mode: mode,
+            preciseViewport: requestPreciseViewport,
+            renderedPixelHeight: normalFinalSize.height
+        )
+        let size = usesDoubleDoubleFinalRender
+            ? cappedRenderSize(
+                for: viewSize,
+                maxWidth: doubleDoublePreviewMaxPixelWidth,
+                maxHeight: doubleDoublePreviewMaxPixelHeight
+            )
+            : normalFinalSize
         renderProgress = max(renderProgress, 0.82)
 
-        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, maxIterations: finalRenderIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995) {
+        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, preciseViewport: requestPreciseViewport, maxIterations: finalRenderIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995, doubleDoubleEnabled: usesDoubleDoubleFinalRender) {
             let platformImage = makePlatformImage(image, width: size.width, height: size.height)
             self.image = platformImage
             onImagePublished(
-                HighPrecisionViewportState(centerX: cx, centerY: cy, scale: currentScale, iterations: finalRenderIterations),
+                HighPrecisionViewportState(
+                    centerX: cx,
+                    centerY: cy,
+                    scale: currentScale,
+                    preciseViewport: requestPreciseViewport,
+                    iterations: finalRenderIterations
+                ),
                 platformImage
             )
 
@@ -2669,7 +2727,7 @@ struct HighPrecisionFractalPreview: View {
         #endif
     }
 
-    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, maxIterations: Int, requestID: String, progressStart: Double? = nil, progressEnd: Double? = nil) async -> CGImage? {
+    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, preciseViewport: PreciseViewport? = nil, maxIterations: Int, requestID: String, progressStart: Double? = nil, progressEnd: Double? = nil, doubleDoubleEnabled: Bool = false) async -> CGImage? {
         let aspect = viewportAspectRatio
         let worker = Task.detached(priority: .userInitiated) {
             renderFractal(
@@ -2680,8 +2738,10 @@ struct HighPrecisionFractalPreview: View {
                 centerX: centerX,
                 centerY: centerY,
                 scale: scale,
+                preciseViewport: preciseViewport,
                 maxIterations: maxIterations,
                 viewportAspectRatio: aspect,
+                doubleDoubleEnabled: doubleDoubleEnabled,
                 progressCallback: { progress in
                     guard let progressStart, let progressEnd else { return }
                     Task { @MainActor in
@@ -2824,6 +2884,151 @@ nonisolated func renderFractalSupersampled(
     )
 }
 
+nonisolated private final class DirectRenderPixelStorage: @unchecked Sendable {
+    let pointer: UnsafeMutablePointer<UInt8>
+    let byteCount: Int
+
+    init(byteCount: Int) {
+        self.byteCount = byteCount
+        pointer = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
+    }
+
+    deinit {
+        pointer.deallocate()
+    }
+}
+
+nonisolated private final class DirectRenderBandProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private let totalBands: Int
+    private var completedBands = 0
+    private let report: @Sendable (Double) -> Void
+
+    init(totalBands: Int, report: @escaping @Sendable (Double) -> Void) {
+        self.totalBands = max(totalBands, 1)
+        self.report = report
+    }
+
+    func finishBand() {
+        lock.lock()
+        completedBands += 1
+        let progress = Double(completedBands) / Double(totalBands)
+        lock.unlock()
+
+        report(progress)
+    }
+}
+
+nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
+    width: Int,
+    height: Int,
+    palette: FractalPalette,
+    preciseViewport: PreciseViewport,
+    maxIterations: Int,
+    viewportAspectRatio: Double,
+    progressCallback: (@Sendable (Double) -> Void)? = nil
+) -> CGImage? {
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    let bitsPerComponent = 8
+    let byteCount = width * height * bytesPerPixel
+    let storage = DirectRenderPixelStorage(byteCount: byteCount)
+
+    let processorCount = max(1, ProcessInfo.processInfo.activeProcessorCount)
+    let bandCount = min(height, max(2, processorCount * 3))
+    let rowsPerBand = (height + bandCount - 1) / bandCount
+    let bandProgress = progressCallback.map {
+        DirectRenderBandProgress(totalBands: bandCount, report: $0)
+    }
+
+    let pixelWidth = Double(width)
+    let pixelHeight = Double(height)
+
+    DispatchQueue.concurrentPerform(iterations: bandCount) { bandIndex in
+        let startRow = bandIndex * rowsPerBand
+        let endRow = min(startRow + rowsPerBand, height)
+
+        guard startRow < endRow else { return }
+
+        for py in startRow..<endRow {
+            if Task.isCancelled { return }
+
+            let verticalOffset = (Double(py) + 0.5) / pixelHeight - 0.5
+            let y0 = preciseViewport.centerY + preciseViewport.scale * verticalOffset
+
+            for px in 0..<width {
+                if px.isMultiple(of: 64), Task.isCancelled { return }
+
+                let horizontalOffset =
+                    ((Double(px) + 0.5) / pixelWidth - 0.5)
+                    * viewportAspectRatio
+                let x0 = preciseViewport.centerX
+                    + preciseViewport.scale * horizontalOffset
+
+                var localMaxIterations = maxIterations
+                var iteration = calculateMandelbrotIterationDoubleDouble(
+                    cX: x0,
+                    cY: y0,
+                    maxIterations: localMaxIterations
+                )
+
+                if shouldApplyAdaptiveIterationRefinement(
+                    mode: .mandelbrot,
+                    width: width,
+                    maxIterations: maxIterations,
+                    iteration: iteration
+                ) {
+                    localMaxIterations = min(maxIterations + maxIterations / 2, 120_000)
+                    iteration = calculateMandelbrotIterationDoubleDouble(
+                        cX: x0,
+                        cY: y0,
+                        maxIterations: localMaxIterations
+                    )
+                }
+
+                let color: (r: Double, g: Double, b: Double)
+
+                if iteration == localMaxIterations {
+                    color = insideColor(mode: .mandelbrot, palette: palette)
+                } else {
+                    let t = Double(iteration) / Double(localMaxIterations)
+                    color = cpuPaletteColor(
+                        t: t,
+                        mode: .mandelbrot,
+                        palette: palette
+                    )
+                }
+
+                let offset = (py * width + px) * bytesPerPixel
+                storage.pointer[offset + 0] = UInt8(clamp01(color.r) * 255.0)
+                storage.pointer[offset + 1] = UInt8(clamp01(color.g) * 255.0)
+                storage.pointer[offset + 2] = UInt8(clamp01(color.b) * 255.0)
+                storage.pointer[offset + 3] = 255
+            }
+        }
+
+        bandProgress?.finishBand()
+    }
+
+    guard !Task.isCancelled else { return nil }
+
+    let pixels = Array(
+        UnsafeBufferPointer(
+            start: storage.pointer,
+            count: storage.byteCount
+        )
+    )
+
+    return makeCGImage(
+        pixels: pixels,
+        width: width,
+        height: height,
+        bytesPerRow: bytesPerRow,
+        bitsPerComponent: bitsPerComponent,
+        bytesPerPixel: bytesPerPixel
+    )
+}
+
 nonisolated func renderFractal(
     width: Int,
     height: Int,
@@ -2832,9 +3037,11 @@ nonisolated func renderFractal(
     centerX: Double,
     centerY: Double,
     scale: Double,
+    preciseViewport: PreciseViewport? = nil,
     maxIterations: Int,
     viewportAspectRatio: Double? = nil,
-    progressCallback: ((Double) -> Void)? = nil
+    doubleDoubleEnabled: Bool = false,
+    progressCallback: (@Sendable (Double) -> Void)? = nil
 ) -> CGImage? {
     
     let bytesPerPixel = 4
@@ -2844,6 +3051,20 @@ nonisolated func renderFractal(
     var pixels = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
     
     let aspectRatio = viewportAspectRatio ?? (Double(width) / Double(height))
+
+    if doubleDoubleEnabled,
+       mode == .mandelbrot,
+       let preciseViewport {
+        return renderDirectMandelbrotDoubleDoubleParallel(
+            width: width,
+            height: height,
+            palette: palette,
+            preciseViewport: preciseViewport,
+            maxIterations: maxIterations,
+            viewportAspectRatio: aspectRatio,
+            progressCallback: progressCallback
+        )
+    }
     
     for py in 0..<height {
         if Task.isCancelled { return nil }
