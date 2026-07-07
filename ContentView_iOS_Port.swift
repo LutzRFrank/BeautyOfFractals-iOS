@@ -1600,32 +1600,6 @@ struct HighPrecisionViewportState: Equatable {
     let iterations: Int
 }
 
-private struct FractalViewportTransform {
-    let centerX: Double
-    let centerY: Double
-    let scale: Double
-    let viewSize: CGSize
-
-    private var width: Double { max(Double(viewSize.width), 1.0) }
-    private var height: Double { max(Double(viewSize.height), 1.0) }
-    var aspectRatio: Double { width / height }
-
-    func complexPoint(at point: CGPoint) -> (x: Double, y: Double) {
-        (
-            centerX + (Double(point.x) / width - 0.5) * scale * aspectRatio,
-            centerY + (Double(point.y) / height - 0.5) * scale
-        )
-    }
-
-    func centerAfterPan(from start: CGPoint, to current: CGPoint) -> (x: Double, y: Double) {
-        let dx = Double(current.x - start.x)
-        let dy = Double(current.y - start.y)
-        return (
-            centerX - (dx / width) * scale * aspectRatio,
-            centerY - (dy / height) * scale
-        )
-    }
-}
 
 struct MandelbrotView: View {
     let fractalMode: FractalMode
