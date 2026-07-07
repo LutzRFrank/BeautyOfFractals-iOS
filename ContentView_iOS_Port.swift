@@ -1410,44 +1410,24 @@ The zoom overlay is visible only in the app and is not included in exports.
     }
     
     private func increaseIterationsForZoom() {
-        if maxIterations < 500 {
+        if maxIterations < 2_500 {
             maxIterations += 400
-        } else if maxIterations < 1000 {
-            maxIterations += 700
-        } else if maxIterations < 2500 {
-            maxIterations += 1200
-        } else if maxIterations < 5000 {
-            maxIterations += 1500
-        } else if maxIterations < 8000 {
-            maxIterations += 2000
-        } else if maxIterations < 12000 {
-            maxIterations += 3000
-        } else if maxIterations < 18000 {
-            maxIterations += 4000
+        } else if maxIterations < 10_000 {
+            maxIterations += 600
         } else {
-            maxIterations += 6000
+            maxIterations += 800
         }
         
-        maxIterations = min(maxIterations, 24000)
+        maxIterations = min(maxIterations, 24_000)
     }
     
     private func decreaseIterationsForZoom() {
-        if maxIterations > 20000 {
-            maxIterations -= 6000
-        } else if maxIterations > 16000 {
-            maxIterations -= 4000
-        } else if maxIterations > 10000 {
-            maxIterations -= 3000
-        } else if maxIterations > 7000 {
-            maxIterations -= 2000
-        } else if maxIterations > 3500 {
-            maxIterations -= 1500
-        } else if maxIterations > 2500 {
-            maxIterations -= 1200
-        } else if maxIterations > 1000 {
-            maxIterations -= 700
-        } else {
+        if maxIterations > 10_000 {
             maxIterations -= 400
+        } else if maxIterations > 2_500 {
+            maxIterations -= 300
+        } else {
+            maxIterations -= 200
         }
         
         maxIterations = max(maxIterations, 300)
@@ -1990,11 +1970,26 @@ struct MandelbrotView: View {
     }
 
     private func increaseIterationsForZoom() {
-        if maxIterations < 500 { maxIterations += 400 } else if maxIterations < 1000 { maxIterations += 700 } else if maxIterations < 2500 { maxIterations += 1200 } else if maxIterations < 5000 { maxIterations += 1500 } else if maxIterations < 8000 { maxIterations += 2000 } else { maxIterations += 3000 }
-        maxIterations = min(maxIterations, 24000)
+        if maxIterations < 2_500 {
+            maxIterations += 400
+        } else if maxIterations < 10_000 {
+            maxIterations += 600
+        } else {
+            maxIterations += 800
+        }
+
+        maxIterations = min(maxIterations, 24_000)
     }
+
     private func decreaseIterationsForZoom() {
-        if maxIterations > 20000 { maxIterations -= 6000 } else if maxIterations > 16000 { maxIterations -= 4000 } else if maxIterations > 10000 { maxIterations -= 3000 } else if maxIterations > 7000 { maxIterations -= 2000 } else if maxIterations > 3500 { maxIterations -= 1500 } else if maxIterations > 2500 { maxIterations -= 1200 } else if maxIterations > 1000 { maxIterations -= 700 } else { maxIterations -= 400 }
+        if maxIterations > 10_000 {
+            maxIterations -= 400
+        } else if maxIterations > 2_500 {
+            maxIterations -= 300
+        } else {
+            maxIterations -= 200
+        }
+
         maxIterations = max(maxIterations, 300)
     }
     private func zoomAt(location: CGPoint, factor: Double, viewSize: CGSize) {
