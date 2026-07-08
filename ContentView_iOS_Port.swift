@@ -734,12 +734,23 @@ struct ContentView: View {
     @State private var maxIterations: Int = 300
     @State private var isSavingSnapshot: Bool = false
     @State private var showHelp: Bool = false
+    @State private var renderStatusPanelVisible: Bool = false
+    @State private var renderStatusPanelPinned: Bool = false
+    @State private var renderStatusPanelManuallyHidden: Bool = false
+    @State private var renderStatusPanelIsRendering: Bool = false
+    @State private var renderStatusPanelOffset: CGSize = .zero
     @State private var showFavoritesPanel: Bool = false
     @StateObject private var favoritesStore = FavoritesStore()
     @State private var navigationHistory: [ViewportSnapshot] = []
     @State private var navigationRevision: UInt = 0
 
     private let maximumNavigationHistory = 100
+
+    private var renderStatusPanelIsDisplayed: Bool {
+        renderStatusPanelPinned
+            || renderStatusPanelVisible
+            || (renderStatusPanelIsRendering && !renderStatusPanelManuallyHidden)
+    }
 
     private struct ViewportSnapshot: Equatable {
         let centerX: Double
@@ -915,7 +926,12 @@ struct ContentView: View {
                 maxIterations: $maxIterations,
                 renderQuality: renderQuality,
                 navigationStarted: recordNavigationStep,
-                navigationRevision: navigationRevision
+                navigationRevision: navigationRevision,
+                renderStatusPanelVisible: $renderStatusPanelVisible,
+                renderStatusPanelPinned: $renderStatusPanelPinned,
+                renderStatusPanelManuallyHidden: $renderStatusPanelManuallyHidden,
+                renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
+                renderStatusPanelOffset: $renderStatusPanelOffset
             )
             #if os(macOS)
             .frame(minWidth: 900, minHeight: 650)
@@ -1149,6 +1165,22 @@ The zoom overlay is visible only in the app and is not included in exports.
                     }
                     .accessibilityLabel("Favorite Spots")
                     
+                    Button {
+                        if renderStatusPanelIsDisplayed {
+                            renderStatusPanelPinned = false
+                            renderStatusPanelVisible = false
+                            renderStatusPanelManuallyHidden = true
+                        } else {
+                            renderStatusPanelVisible = true
+                            renderStatusPanelManuallyHidden = false
+                        }
+                    } label: {
+                        Image(systemName: "gauge")
+                    }
+                    .accessibilityLabel(
+                        renderStatusPanelIsDisplayed ? "Hide render status" : "Show render status"
+                    )
+
                     Button {
                         showHelp = true
                     } label: {
@@ -1611,6 +1643,11 @@ struct MandelbrotView: View {
     let renderQuality: RenderQuality
     let navigationStarted: () -> Void
     let navigationRevision: UInt
+    @Binding var renderStatusPanelVisible: Bool
+    @Binding var renderStatusPanelPinned: Bool
+    @Binding var renderStatusPanelManuallyHidden: Bool
+    @Binding var renderStatusPanelIsRendering: Bool
+    @Binding var renderStatusPanelOffset: CGSize
 
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
@@ -1741,6 +1778,11 @@ struct MandelbrotView: View {
                             },
                             renderEpoch: highPrecisionRenderEpoch,
                             heldImage: visibleHighPrecisionState == state ? visibleHighPrecisionImage : nil,
+                            renderStatusPanelVisible: $renderStatusPanelVisible,
+                            renderStatusPanelPinned: $renderStatusPanelPinned,
+                            renderStatusPanelManuallyHidden: $renderStatusPanelManuallyHidden,
+                            renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
+                            renderStatusPanelOffset: $renderStatusPanelOffset,
                             onImagePublished: { state, image in
                                 guard state.centerX == currentViewportState.centerX && state.centerY == currentViewportState.centerY && state.scale == currentViewportState.scale else { return }
                                 visibleHighPrecisionState = state
@@ -2404,11 +2446,16 @@ struct HighPrecisionFractalPreview: View {
     let onCancelRender: () -> Void
     let renderEpoch: UInt
     let heldImage: PlatformImage?
+    @Binding var renderStatusPanelVisible: Bool
+    @Binding var renderStatusPanelPinned: Bool
+    @Binding var renderStatusPanelManuallyHidden: Bool
+    @Binding var renderStatusPanelIsRendering: Bool
+    @Binding var renderStatusPanelOffset: CGSize
     let onImagePublished: (HighPrecisionViewportState, PlatformImage) -> Void
 
     @State private var image: PlatformImage?
     @State private var isRendering = false
-    @State private var showRenderStatus = false
+    @State private var renderStatusDragStartOffset: CGSize?
     @State private var renderProgress: Double = 0.0
     @State private var completedRenderIterations: Int?
     @State private var renderStartDate: Date?
@@ -2452,12 +2499,57 @@ struct HighPrecisionFractalPreview: View {
         return "Atmospheric Finish"
     }
 
+    private var shouldShowRenderStatusPanel: Bool {
+        renderStatusPanelPinned
+            || renderStatusPanelVisible
+            || (isRendering && !renderStatusPanelManuallyHidden)
+    }
+
     private func elapsedText(at date: Date) -> String {
         guard let renderStartDate else { return "00:00.0" }
         let elapsed = max(0, date.timeIntervalSince(renderStartDate))
         let minutes = Int(elapsed) / 60
         let seconds = elapsed.truncatingRemainder(dividingBy: 60)
         return String(format: "%02d:%04.1f", minutes, seconds)
+    }
+
+    private func clampedRenderStatusOffset(_ proposedOffset: CGSize) -> CGSize {
+        let panelWidth: CGFloat = 188
+        let estimatedPanelHeight: CGFloat = 220
+        let edgeMargin: CGFloat = 14
+        let defaultTopPadding: CGFloat = 130
+        let bottomMargin: CGFloat = 32
+
+        let horizontalLimit = max(0, (viewSize.width - panelWidth) / 2 - edgeMargin)
+        let minY = edgeMargin - defaultTopPadding
+        let maxY = max(
+            minY,
+            viewSize.height - bottomMargin - estimatedPanelHeight - defaultTopPadding
+        )
+
+        return CGSize(
+            width: min(max(proposedOffset.width, -horizontalLimit), horizontalLimit),
+            height: min(max(proposedOffset.height, minY), maxY)
+        )
+    }
+
+    private var renderStatusDragGesture: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                let startOffset = renderStatusDragStartOffset ?? renderStatusPanelOffset
+                renderStatusDragStartOffset = startOffset
+
+                renderStatusPanelOffset = clampedRenderStatusOffset(
+                    CGSize(
+                        width: startOffset.width + value.translation.width,
+                        height: startOffset.height + value.translation.height
+                    )
+                )
+            }
+            .onEnded { _ in
+                renderStatusPanelOffset = clampedRenderStatusOffset(renderStatusPanelOffset)
+                renderStatusDragStartOffset = nil
+            }
     }
 
     var body: some View {
@@ -2479,7 +2571,7 @@ struct HighPrecisionFractalPreview: View {
                     .allowsHitTesting(false)
                 #endif
             }
-            if isRendering || showRenderStatus {
+            if shouldShowRenderStatusPanel {
                 TimelineView(.periodic(from: .now, by: 0.25)) { timeline in
                     VStack(spacing: 10) {
                         ZStack {
@@ -2529,7 +2621,8 @@ struct HighPrecisionFractalPreview: View {
                     .overlay(alignment: .topLeading) {
                         if isRendering {
                             Button {
-                                showRenderStatus = true
+                                renderStatusPanelVisible = true
+                                renderStatusPanelManuallyHidden = false
                                 onCancelRender()
                             } label: {
                                 Image(systemName: "xmark")
@@ -2546,28 +2639,45 @@ struct HighPrecisionFractalPreview: View {
                     }
                     .overlay(alignment: .topTrailing) {
                         Button {
-                            showRenderStatus.toggle()
+                            renderStatusPanelPinned.toggle()
+                            if renderStatusPanelPinned {
+                                renderStatusPanelVisible = true
+                                renderStatusPanelManuallyHidden = false
+                            } else {
+                                renderStatusPanelVisible = false
+                            }
                         } label: {
-                            Image(systemName: showRenderStatus ? "pin.fill" : "pin")
+                            Image(systemName: renderStatusPanelPinned ? "pin.fill" : "pin")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(
-                                    .white.opacity(showRenderStatus ? 0.92 : 0.58)
+                                    .white.opacity(renderStatusPanelPinned ? 0.92 : 0.58)
                                 )
                                 .frame(width: 44, height: 44)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(
-                            showRenderStatus ? "Unpin render status" : "Pin render status"
+                            renderStatusPanelPinned ? "Unpin render status" : "Pin render status"
                         )
                     }
                     .background(.ultraThinMaterial.opacity(0.82))
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+                    .offset(renderStatusPanelOffset)
+                    .simultaneousGesture(renderStatusDragGesture)
                     .padding(.top, 130)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
+        }
+        .onChange(of: viewSize) {
+            renderStatusPanelOffset = clampedRenderStatusOffset(renderStatusPanelOffset)
+        }
+        .onChange(of: isRendering) {
+            renderStatusPanelIsRendering = isRendering
+        }
+        .onDisappear {
+            renderStatusPanelIsRendering = false
         }
         .task(id: renderID) { await renderPreview() }
     }
@@ -2584,6 +2694,7 @@ struct HighPrecisionFractalPreview: View {
         completedRenderIterations = nil
         renderStartDate = Date()
         lastRenderDurationText = nil
+        renderStatusPanelManuallyHidden = false
         isRendering = true
         do { try await Task.sleep(nanoseconds: refinementDebounceNanoseconds) } catch { return }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
