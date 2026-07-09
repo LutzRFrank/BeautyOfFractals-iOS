@@ -804,6 +804,8 @@ struct ContentView: View {
     
     @State private var maxIterations: Int = 300
     @State private var isSavingSnapshot: Bool = false
+    @State private var exportStartDate: Date?
+    @State private var exportStatusText: String?
     @State private var showHelp: Bool = false
     @State private var renderStatusPanelVisible: Bool = false
     @State private var renderStatusPanelPinned: Bool = false
@@ -888,6 +890,24 @@ struct ContentView: View {
             Int(Double(exportEffectiveIterations) * (isPhoneDevice ? 1.25 : 1.5)),
             ultraExportIterationCap
         )
+    }
+
+    private var ultraExportUnavailableInDeepZoom: Bool {
+        guard fractalMode == .mandelbrot else { return false }
+        let preciseScale = abs(preciseViewport.scale.hi + preciseViewport.scale.lo)
+        return preciseScale.isFinite && preciseScale < highPrecisionScaleLimit
+    }
+
+    private func exportElapsedText(since startDate: Date) -> String {
+        let elapsed = max(0, Date().timeIntervalSince(startDate))
+        let minutes = Int(elapsed) / 60
+        let seconds = elapsed.truncatingRemainder(dividingBy: 60)
+        return String(format: "%02d:%04.1f", minutes, seconds)
+    }
+
+    private func clearExportStatus() {
+        exportStartDate = nil
+        exportStatusText = nil
     }
     
     #if os(iOS)
@@ -1007,6 +1027,7 @@ struct ContentView: View {
                 renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
                 renderStatusPanelOffset: $renderStatusPanelOffset,
                 latestFavoriteThumbnailPNG: $latestFavoriteThumbnailPNG,
+                exportStatusText: exportStatusText,
                 visibleHighPrecisionExportState: $visibleHighPrecisionExportState,
                 visibleHighPrecisionExportImage: $visibleHighPrecisionExportImage
             )
@@ -1080,16 +1101,19 @@ struct ContentView: View {
             latestFavoriteThumbnailPNG = nil
             visibleHighPrecisionExportState = nil
             visibleHighPrecisionExportImage = nil
+            clearExportStatus()
         }
         .onChange(of: fractalPalette) {
             latestFavoriteThumbnailPNG = nil
             visibleHighPrecisionExportState = nil
             visibleHighPrecisionExportImage = nil
+            clearExportStatus()
         }
         .onChange(of: fractalMode) {
             latestFavoriteThumbnailPNG = nil
             visibleHighPrecisionExportState = nil
             visibleHighPrecisionExportImage = nil
+            clearExportStatus()
         }
         #if os(iOS)
         .sheet(isPresented: $showHelp) {
@@ -1246,6 +1270,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                     Menu {
                         ForEach(FractalPalette.allCases) { palette in
                             Button {
+                                clearExportStatus()
                                 fractalPalette = palette
                             } label: {
                                 Text("\(fractalPalette == palette ? "✓ " : "   ")\(palette.displayName)")
@@ -1334,9 +1359,14 @@ The zoom overlay is visible only in the app and is not included in exports.
                             
                             Divider()
                             
+                            if ultraExportUnavailableInDeepZoom {
+                                Text("Use normal export for deep zoom")
+                            }
+
                             Button("Ultra Mobile 1440 × 900 PNG · 2×") {
                                 saveSnapshot(width: 1440, height: 900, supersampling: 2)
                             }
+                            .disabled(ultraExportUnavailableInDeepZoom)
                         } else {
                             Button("Export 1440 × 900 PNG") {
                                 saveSnapshot(width: 1440, height: 900)
@@ -1352,13 +1382,19 @@ The zoom overlay is visible only in the app and is not included in exports.
                             
                             Divider()
                             
+                            if ultraExportUnavailableInDeepZoom {
+                                Text("Use normal export for deep zoom")
+                            }
+
                             Button("Ultra Export 1440 × 900 PNG · 2×") {
                                 saveSnapshot(width: 1440, height: 900, supersampling: 2)
                             }
+                            .disabled(ultraExportUnavailableInDeepZoom)
                             
                             Button("Ultra Export 2560 × 1600 PNG · 2×") {
                                 saveSnapshot(width: 2560, height: 1600, supersampling: 2)
                             }
+                            .disabled(ultraExportUnavailableInDeepZoom)
                         }
                         #else
                         Button("Export 1440 × 900 PNG") {
@@ -1375,13 +1411,19 @@ The zoom overlay is visible only in the app and is not included in exports.
                         
                         Divider()
                         
+                        if ultraExportUnavailableInDeepZoom {
+                            Text("Use normal export for deep zoom")
+                        }
+
                         Button("Ultra Export 1440 × 900 PNG · 2×") {
                             saveSnapshot(width: 1440, height: 900, supersampling: 2)
                         }
+                        .disabled(ultraExportUnavailableInDeepZoom)
                         
                         Button("Ultra Export 2560 × 1600 PNG · 2×") {
                             saveSnapshot(width: 2560, height: 1600, supersampling: 2)
                         }
+                        .disabled(ultraExportUnavailableInDeepZoom)
                         #endif
                     } label: {
                         if isSavingSnapshot {
@@ -1484,6 +1526,7 @@ The zoom overlay is visible only in the app and is not included in exports.
     }
     
     private func applyPreciseViewport(_ viewport: PreciseViewport) {
+        clearExportStatus()
         preciseViewport = viewport
 
         let projection = viewport.doubleProjection
@@ -1706,6 +1749,8 @@ The zoom overlay is visible only in the app and is not included in exports.
         cachedHighPrecisionImage: CGImage? = nil
     ) {
         isSavingSnapshot = true
+        exportStartDate = Date()
+        exportStatusText = nil
         
         Task.detached(priority: .userInitiated) {
             let renderedImage: CGImage?
@@ -1745,7 +1790,13 @@ The zoom overlay is visible only in the app and is not included in exports.
             }
             
             guard let finalImage = renderedImage ?? cachedHighPrecisionImage else {
-                await MainActor.run { isSavingSnapshot = false }
+                await MainActor.run {
+                    isSavingSnapshot = false
+                    exportStartDate = nil
+                    exportStatusText = "failed"
+                    renderStatusPanelVisible = true
+                    renderStatusPanelManuallyHidden = false
+                }
                 return
             }
             
@@ -1756,20 +1807,39 @@ The zoom overlay is visible only in the app and is not included in exports.
             #endif
             
             guard let pngData else {
-                await MainActor.run { isSavingSnapshot = false }
+                await MainActor.run {
+                    isSavingSnapshot = false
+                    exportStartDate = nil
+                    exportStatusText = "failed"
+                    renderStatusPanelVisible = true
+                    renderStatusPanelManuallyHidden = false
+                }
                 return
             }
             
+            let exportSucceeded: Bool
             do {
                 try pngData.write(to: url, options: [.atomic])
+                exportSucceeded = true
             } catch {
                 print("Snapshot konnte nicht gespeichert werden:", error)
+                exportSucceeded = false
             }
             
             await MainActor.run {
                 #if os(iOS)
-                exportURL = url
+                if exportSucceeded {
+                    exportURL = url
+                }
                 #endif
+                if exportSucceeded, let exportStartDate {
+                    exportStatusText = exportElapsedText(since: exportStartDate)
+                } else {
+                    exportStatusText = "failed"
+                }
+                exportStartDate = nil
+                renderStatusPanelVisible = true
+                renderStatusPanelManuallyHidden = false
                 isSavingSnapshot = false
             }
         }
@@ -1804,6 +1874,7 @@ struct MandelbrotView: View {
     @Binding var renderStatusPanelIsRendering: Bool
     @Binding var renderStatusPanelOffset: CGSize
     @Binding var latestFavoriteThumbnailPNG: Data?
+    let exportStatusText: String?
     @Binding var visibleHighPrecisionExportState: HighPrecisionViewportState?
     @Binding var visibleHighPrecisionExportImage: PlatformImage?
 
@@ -1958,6 +2029,7 @@ struct MandelbrotView: View {
                             },
                             renderEpoch: highPrecisionRenderEpoch,
                             heldImage: visibleHighPrecisionState == state ? visibleHighPrecisionImage : nil,
+                            exportStatusText: exportStatusText,
                             renderStatusPanelVisible: $renderStatusPanelVisible,
                             renderStatusPanelPinned: $renderStatusPanelPinned,
                             renderStatusPanelManuallyHidden: $renderStatusPanelManuallyHidden,
@@ -2671,6 +2743,7 @@ struct HighPrecisionFractalPreview: View {
     let onCancelRender: () -> Void
     let renderEpoch: UInt
     let heldImage: PlatformImage?
+    let exportStatusText: String?
     @Binding var renderStatusPanelVisible: Bool
     @Binding var renderStatusPanelPinned: Bool
     @Binding var renderStatusPanelManuallyHidden: Bool
@@ -2727,6 +2800,7 @@ struct HighPrecisionFractalPreview: View {
     private var shouldShowRenderStatusPanel: Bool {
         renderStatusPanelPinned
             || renderStatusPanelVisible
+            || exportStatusText != nil
             || (isRendering && !renderStatusPanelManuallyHidden)
     }
 
@@ -2812,11 +2886,11 @@ struct HighPrecisionFractalPreview: View {
                                 .rotationEffect(.degrees(-90))
 
                             VStack(spacing: 4) {
-                                Text(renderCancelled ? "Cancelled" : (isRendering ? "Rendering…" : "Ready"))
+                                Text(renderCancelled ? "Cancelled" : (isRendering ? "Rendering…" : (exportStatusText == nil ? "Ready" : (exportStatusText == "failed" ? "Export failed" : "Export ready"))))
                                     .font(.system(size: 11, weight: .medium, design: .rounded))
                                     .foregroundStyle(.white.opacity(0.78))
 
-                                Text(renderPercentText)
+                                Text(isRendering || exportStatusText == nil ? renderPercentText : "Done")
                                     .font(.system(size: 27, weight: .bold, design: .rounded))
                                     .foregroundStyle(.white)
 
@@ -2836,7 +2910,7 @@ struct HighPrecisionFractalPreview: View {
                                 ? "Preview kept"
                                 : (isRendering
                                     ? "Elapsed: \(elapsedText(at: timeline.date))"
-                                    : "Render time: \(lastRenderDurationText ?? "—")")
+                                    : (exportStatusText.map { $0 == "failed" ? "Export failed" : "Export finished · \($0)" } ?? "Render time: \(lastRenderDurationText ?? "—")"))
                         )
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.72))
