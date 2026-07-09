@@ -813,6 +813,8 @@ struct ContentView: View {
     @State private var showFavoritesPanel: Bool = false
     @StateObject private var favoritesStore = FavoritesStore()
     @State private var latestFavoriteThumbnailPNG: Data?
+    @State private var visibleHighPrecisionExportState: HighPrecisionViewportState?
+    @State private var visibleHighPrecisionExportImage: PlatformImage?
     @State private var navigationHistory: [ViewportSnapshot] = []
     @State private var navigationRevision: UInt = 0
 
@@ -1004,7 +1006,9 @@ struct ContentView: View {
                 renderStatusPanelManuallyHidden: $renderStatusPanelManuallyHidden,
                 renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
                 renderStatusPanelOffset: $renderStatusPanelOffset,
-                latestFavoriteThumbnailPNG: $latestFavoriteThumbnailPNG
+                latestFavoriteThumbnailPNG: $latestFavoriteThumbnailPNG,
+                visibleHighPrecisionExportState: $visibleHighPrecisionExportState,
+                visibleHighPrecisionExportImage: $visibleHighPrecisionExportImage
             )
             #if os(macOS)
             .frame(minWidth: 900, minHeight: 650)
@@ -1074,9 +1078,18 @@ struct ContentView: View {
         #endif
         .onChange(of: preciseViewport) {
             latestFavoriteThumbnailPNG = nil
+            visibleHighPrecisionExportState = nil
+            visibleHighPrecisionExportImage = nil
         }
         .onChange(of: fractalPalette) {
             latestFavoriteThumbnailPNG = nil
+            visibleHighPrecisionExportState = nil
+            visibleHighPrecisionExportImage = nil
+        }
+        .onChange(of: fractalMode) {
+            latestFavoriteThumbnailPNG = nil
+            visibleHighPrecisionExportState = nil
+            visibleHighPrecisionExportImage = nil
         }
         #if os(iOS)
         .sheet(isPresented: $showHelp) {
@@ -1592,6 +1605,7 @@ The zoom overlay is visible only in the app and is not included in exports.
         let snapshotCenterX = centerX
         let snapshotCenterY = centerY
         let snapshotScale = scale
+        let snapshotPreciseViewport = preciseViewport
         #if os(iOS)
         let snapshotSupersampling = isPhoneDevice && exportWidth > 1440 ? 1 : max(1, min(supersampling, 2))
         #else
@@ -1599,6 +1613,36 @@ The zoom overlay is visible only in the app and is not included in exports.
         #endif
         let snapshotIterations = snapshotSupersampling > 1 ? ultraExportEffectiveIterations : exportEffectiveIterations
         let snapshotExportSuffix = snapshotSupersampling > 1 ? "-Ultra\(snapshotSupersampling)x" : ""
+        let snapshotDoubleDoubleEnabled = snapshotSupersampling == 1 && shouldUseDoubleDoubleMandelbrotFinalRender(
+            mode: snapshotMode,
+            preciseViewport: snapshotPreciseViewport,
+            renderedPixelHeight: exportHeight
+        )
+        #if os(iOS)
+        let snapshotCachedHighPrecisionImage: CGImage?
+        if snapshotSupersampling == 1,
+           snapshotMode == .mandelbrot,
+           snapshotScale < highPrecisionScaleLimit,
+           let cachedState = visibleHighPrecisionExportState,
+           let cachedImage = visibleHighPrecisionExportImage,
+           cachedState.modeRawValue == snapshotMode.rawValue,
+           cachedState.paletteRawValue == snapshotPalette.rawValue,
+           cachedState.centerX == snapshotCenterX,
+           cachedState.centerY == snapshotCenterY,
+           cachedState.scale == snapshotScale,
+           cachedState.preciseViewport == snapshotPreciseViewport,
+           cachedState.iterations == effectiveIterations {
+            snapshotCachedHighPrecisionImage = makeExportCGImage(
+                from: cachedImage,
+                width: exportWidth,
+                height: exportHeight
+            )
+        } else {
+            snapshotCachedHighPrecisionImage = nil
+        }
+        #else
+        let snapshotCachedHighPrecisionImage: CGImage? = nil
+        #endif
         let fileName = "BeautyOfFractals-\(snapshotMode.fileName)-\(snapshotPalette.fileName)-\(snapshotIterations)-iterations\(snapshotExportSuffix)-\(exportWidth)x\(exportHeight).png"
         
         #if os(macOS)
@@ -1619,8 +1663,11 @@ The zoom overlay is visible only in the app and is not included in exports.
                 centerX: snapshotCenterX,
                 centerY: snapshotCenterY,
                 scale: snapshotScale,
+                preciseViewport: snapshotPreciseViewport,
                 supersampling: snapshotSupersampling,
-                iterations: snapshotIterations
+                iterations: snapshotIterations,
+                doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
+                cachedHighPrecisionImage: snapshotCachedHighPrecisionImage
             )
         }
         #else
@@ -1634,8 +1681,11 @@ The zoom overlay is visible only in the app and is not included in exports.
             centerX: snapshotCenterX,
             centerY: snapshotCenterY,
             scale: snapshotScale,
+            preciseViewport: snapshotPreciseViewport,
             supersampling: snapshotSupersampling,
-            iterations: snapshotIterations
+            iterations: snapshotIterations,
+            doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
+            cachedHighPrecisionImage: snapshotCachedHighPrecisionImage
         )
         #endif
     }
@@ -1649,16 +1699,19 @@ The zoom overlay is visible only in the app and is not included in exports.
         centerX snapshotCenterX: Double,
         centerY snapshotCenterY: Double,
         scale snapshotScale: Double,
+        preciseViewport snapshotPreciseViewport: PreciseViewport,
         supersampling snapshotSupersampling: Int,
-        iterations snapshotIterations: Int
+        iterations snapshotIterations: Int,
+        doubleDoubleEnabled snapshotDoubleDoubleEnabled: Bool,
+        cachedHighPrecisionImage: CGImage? = nil
     ) {
         isSavingSnapshot = true
         
         Task.detached(priority: .userInitiated) {
-            let cgImage: CGImage?
+            let renderedImage: CGImage?
             
             if snapshotMode == .mandelbulb3D {
-                cgImage = renderMandelbulb3DImage(
+                renderedImage = renderMandelbulb3DImage(
                     width: exportWidth,
                     height: exportHeight,
                     palette: snapshotPalette,
@@ -1667,7 +1720,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                     scale: snapshotScale
                 )
             } else if snapshotMode == .mandelbox3D {
-                cgImage = renderMandelbox3DImage(
+                renderedImage = renderMandelbox3DImage(
                     width: exportWidth,
                     height: exportHeight,
                     palette: snapshotPalette,
@@ -1676,7 +1729,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                     scale: snapshotScale
                 )
             } else {
-                cgImage = renderFractalSupersampled(
+                renderedImage = renderFractalSupersampled(
                     width: exportWidth,
                     height: exportHeight,
                     supersampling: snapshotSupersampling,
@@ -1685,11 +1738,13 @@ The zoom overlay is visible only in the app and is not included in exports.
                     centerX: snapshotCenterX,
                     centerY: snapshotCenterY,
                     scale: snapshotScale,
-                    maxIterations: snapshotIterations
+                    preciseViewport: snapshotPreciseViewport,
+                    maxIterations: snapshotIterations,
+                    doubleDoubleEnabled: snapshotDoubleDoubleEnabled
                 )
             }
             
-            guard let finalImage = cgImage else {
+            guard let finalImage = renderedImage ?? cachedHighPrecisionImage else {
                 await MainActor.run { isSavingSnapshot = false }
                 return
             }
@@ -1722,6 +1777,8 @@ The zoom overlay is visible only in the app and is not included in exports.
 }
 
 struct HighPrecisionViewportState: Equatable {
+    let modeRawValue: Int
+    let paletteRawValue: Int
     let centerX: Double
     let centerY: Double
     let scale: Double
@@ -1747,6 +1804,8 @@ struct MandelbrotView: View {
     @Binding var renderStatusPanelIsRendering: Bool
     @Binding var renderStatusPanelOffset: CGSize
     @Binding var latestFavoriteThumbnailPNG: Data?
+    @Binding var visibleHighPrecisionExportState: HighPrecisionViewportState?
+    @Binding var visibleHighPrecisionExportImage: PlatformImage?
 
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
@@ -1814,6 +1873,8 @@ struct MandelbrotView: View {
 
     private var currentViewportState: HighPrecisionViewportState {
         HighPrecisionViewportState(
+            modeRawValue: fractalMode.rawValue,
+            paletteRawValue: fractalPalette.rawValue,
             centerX: centerX,
             centerY: centerY,
             scale: scale,
@@ -1903,9 +1964,11 @@ struct MandelbrotView: View {
                             renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
                             renderStatusPanelOffset: $renderStatusPanelOffset,
                             onImagePublished: { state, image in
-                                guard state.centerX == currentViewportState.centerX && state.centerY == currentViewportState.centerY && state.scale == currentViewportState.scale else { return }
+                                guard state == currentViewportState else { return }
                                 visibleHighPrecisionState = state
                                 visibleHighPrecisionImage = image
+                                visibleHighPrecisionExportState = state
+                                visibleHighPrecisionExportImage = image
                                 latestFavoriteThumbnailPNG = makeFavoriteThumbnailPNG(from: image)
                                 #if os(iOS)
                                 WatchFractalMirrorBridge.shared.publish(
@@ -2029,6 +2092,8 @@ struct MandelbrotView: View {
                 isInteractionPreviewActive = false
                 visibleHighPrecisionImage = nil
                 visibleHighPrecisionState = nil
+                visibleHighPrecisionExportImage = nil
+                visibleHighPrecisionExportState = nil
                 frozenHighPrecisionState = nil
                 pinchStartViewport = nil
             }
@@ -2550,6 +2615,46 @@ struct PlatformImageView: View {
 }
 #endif
 
+#if os(iOS)
+@MainActor
+private func makeExportCGImage(
+    from image: PlatformImage,
+    width: Int,
+    height: Int
+) -> CGImage? {
+    guard width > 0, height > 0 else { return nil }
+
+    let targetSize = CGSize(width: width, height: height)
+    let sourceSize = image.size
+    guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+
+    let scale = max(
+        targetSize.width / sourceSize.width,
+        targetSize.height / sourceSize.height
+    )
+    let drawSize = CGSize(
+        width: sourceSize.width * scale,
+        height: sourceSize.height * scale
+    )
+    let drawOrigin = CGPoint(
+        x: (targetSize.width - drawSize.width) / 2.0,
+        y: (targetSize.height - drawSize.height) / 2.0
+    )
+
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = true
+
+    let exportImage = UIGraphicsImageRenderer(size: targetSize, format: format).image { context in
+        UIColor.black.setFill()
+        context.fill(CGRect(origin: .zero, size: targetSize))
+        image.draw(in: CGRect(origin: drawOrigin, size: drawSize))
+    }
+
+    return exportImage.cgImage
+}
+#endif
+
 struct HighPrecisionFractalPreview: View {
     let fractalMode: FractalMode
     let fractalPalette: FractalPalette
@@ -2891,6 +2996,8 @@ struct HighPrecisionFractalPreview: View {
                     self.image = platformImage
                     onImagePublished(
                         HighPrecisionViewportState(
+                            modeRawValue: mode.rawValue,
+                            paletteRawValue: palette.rawValue,
                             centerX: cx,
                             centerY: cy,
                             scale: currentScale,
@@ -2932,6 +3039,8 @@ struct HighPrecisionFractalPreview: View {
             self.image = platformImage
             onImagePublished(
                 HighPrecisionViewportState(
+                    modeRawValue: mode.rawValue,
+                    paletteRawValue: palette.rawValue,
                     centerX: cx,
                     centerY: cy,
                     scale: currentScale,
@@ -3008,7 +3117,9 @@ nonisolated func renderFractalSupersampled(
     centerX: Double,
     centerY: Double,
     scale: Double,
-    maxIterations: Int
+    preciseViewport: PreciseViewport? = nil,
+    maxIterations: Int,
+    doubleDoubleEnabled: Bool = false
 ) -> CGImage? {
     let factor = max(1, min(supersampling, 3))
     
@@ -3021,7 +3132,9 @@ nonisolated func renderFractalSupersampled(
             centerX: centerX,
             centerY: centerY,
             scale: scale,
-            maxIterations: maxIterations
+            preciseViewport: preciseViewport,
+            maxIterations: maxIterations,
+            doubleDoubleEnabled: doubleDoubleEnabled
         )
     }
     
