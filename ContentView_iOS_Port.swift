@@ -837,6 +837,7 @@ struct ContentView: View {
     }
     #if os(iOS)
     @State private var exportURL: URL?
+    @State private var showExportPicker = false
     @State private var controlsAreCollapsed = false
     @State private var controlsActivityRevision: UInt = 0
     #endif
@@ -1121,6 +1122,17 @@ struct ContentView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showExportPicker) {
+            ExportPickerSheet(
+                isPhoneDevice: isPhoneDevice,
+                ultraExportUnavailableInDeepZoom: ultraExportUnavailableInDeepZoom,
+                export: { width, height, supersampling in
+                    saveSnapshot(width: width, height: height, supersampling: supersampling)
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
         #else
         .alert("Controls", isPresented: $showHelp) {
             Button("OK", role: .cancel) { }
@@ -1342,61 +1354,21 @@ The zoom overlay is visible only in the app and is not included in exports.
                         Image(systemName: "arrow.counterclockwise")
                     }
                     
-                    Menu {
-                        #if os(iOS)
-                        if isPhoneDevice {
-                            Button("Fast Export 1440 × 900 PNG") {
-                                saveSnapshot(width: 1440, height: 900)
-                            }
-                            
-                            Button("Quality Export 1920 × 1200 PNG") {
-                                saveSnapshot(width: 1920, height: 1200)
-                            }
-                            
-                            Button("Max Export 2560 × 1600 PNG") {
-                                saveSnapshot(width: 2560, height: 1600)
-                            }
-                            
-                            Divider()
-                            
-                            if ultraExportUnavailableInDeepZoom {
-                                Text("Use normal export for deep zoom")
-                            }
-
-                            Button("Ultra Mobile 1440 × 900 PNG · 2×") {
-                                saveSnapshot(width: 1440, height: 900, supersampling: 2)
-                            }
-                            .disabled(ultraExportUnavailableInDeepZoom)
+                    #if os(iOS)
+                    Button {
+                        showExportPicker = true
+                    } label: {
+                        if isSavingSnapshot {
+                            Text("Rendering…")
+                                .lineLimit(1)
                         } else {
-                            Button("Export 1440 × 900 PNG") {
-                                saveSnapshot(width: 1440, height: 900)
-                            }
-                            
-                            Button("Export 2560 × 1600 PNG") {
-                                saveSnapshot(width: 2560, height: 1600)
-                            }
-                            
-                            Button("Export 2880 × 1800 PNG") {
-                                saveSnapshot(width: 2880, height: 1800)
-                            }
-                            
-                            Divider()
-                            
-                            if ultraExportUnavailableInDeepZoom {
-                                Text("Use normal export for deep zoom")
-                            }
-
-                            Button("Ultra Export 1440 × 900 PNG · 2×") {
-                                saveSnapshot(width: 1440, height: 900, supersampling: 2)
-                            }
-                            .disabled(ultraExportUnavailableInDeepZoom)
-                            
-                            Button("Ultra Export 2560 × 1600 PNG · 2×") {
-                                saveSnapshot(width: 2560, height: 1600, supersampling: 2)
-                            }
-                            .disabled(ultraExportUnavailableInDeepZoom)
+                            Image(systemName: "square.and.arrow.up")
                         }
-                        #else
+                    }
+                    .disabled(isSavingSnapshot)
+                    .accessibilityLabel("Export image")
+                    #else
+                    Menu {
                         Button("Export 1440 × 900 PNG") {
                             saveSnapshot(width: 1440, height: 900)
                         }
@@ -1424,7 +1396,6 @@ The zoom overlay is visible only in the app and is not included in exports.
                             saveSnapshot(width: 2560, height: 1600, supersampling: 2)
                         }
                         .disabled(ultraExportUnavailableInDeepZoom)
-                        #endif
                     } label: {
                         if isSavingSnapshot {
                             Text("Rendering…")
@@ -1434,6 +1405,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                         }
                     }
                     .disabled(isSavingSnapshot)
+                    #endif
                     
                     #if os(iOS)
                     if let exportURL {
@@ -4810,6 +4782,86 @@ private struct HelpScrollBottomPreferenceKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private struct ExportPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let isPhoneDevice: Bool
+    let ultraExportUnavailableInDeepZoom: Bool
+    let export: (_ width: Int, _ height: Int, _ supersampling: Int) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    if isPhoneDevice {
+                        exportButton("Fast Export 1440 × 900 PNG", width: 1440, height: 900)
+                        exportButton("Quality Export 1920 × 1200 PNG", width: 1920, height: 1200)
+                        exportButton("Max Export 2560 × 1600 PNG", width: 2560, height: 1600)
+                    } else {
+                        exportButton("Export 1440 × 900 PNG", width: 1440, height: 900)
+                        exportButton("Export 2560 × 1600 PNG", width: 2560, height: 1600)
+                        exportButton("Export 2880 × 1800 PNG", width: 2880, height: 1800)
+                    }
+                }
+
+                Section {
+                    if ultraExportUnavailableInDeepZoom {
+                        Text("Use normal export for deep zoom")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if isPhoneDevice {
+                        exportButton(
+                            "Ultra Mobile 1440 × 900 PNG · 2×",
+                            width: 1440,
+                            height: 900,
+                            supersampling: 2,
+                            disabled: ultraExportUnavailableInDeepZoom
+                        )
+                    } else {
+                        exportButton(
+                            "Ultra Export 1440 × 900 PNG · 2×",
+                            width: 1440,
+                            height: 900,
+                            supersampling: 2,
+                            disabled: ultraExportUnavailableInDeepZoom
+                        )
+                        exportButton(
+                            "Ultra Export 2560 × 1600 PNG · 2×",
+                            width: 2560,
+                            height: 1600,
+                            supersampling: 2,
+                            disabled: ultraExportUnavailableInDeepZoom
+                        )
+                    }
+                }
+            }
+            .navigationTitle("Export PNG")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func exportButton(
+        _ title: String,
+        width: Int,
+        height: Int,
+        supersampling: Int = 1,
+        disabled: Bool = false
+    ) -> some View {
+        Button {
+            dismiss()
+            export(width, height, supersampling)
+        } label: {
+            Text(title)
+        }
+        .disabled(disabled)
     }
 }
 
