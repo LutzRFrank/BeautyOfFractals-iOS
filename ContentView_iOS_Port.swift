@@ -473,6 +473,12 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
     var centerX: Double
     var centerY: Double
     var scale: Double
+    var centerXHi: Double? = nil
+    var centerXLo: Double? = nil
+    var centerYHi: Double? = nil
+    var centerYLo: Double? = nil
+    var scaleHi: Double? = nil
+    var scaleLo: Double? = nil
     var iterations: Int
     var created: Date = Date()
     var updated: Date = Date()
@@ -480,6 +486,25 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
     var schemaVersion: Int = 1
     var thumbnailPNG: Data? = nil
     var usageCount: Int = 0
+
+    var storedPreciseViewport: PreciseViewport {
+        guard
+            let centerXHi,
+            let centerXLo,
+            let centerYHi,
+            let centerYLo,
+            let scaleHi,
+            let scaleLo
+        else {
+            return PreciseViewport(centerX: centerX, centerY: centerY, scale: scale)
+        }
+
+        return PreciseViewport(
+            centerX: DoubleDouble(hi: centerXHi, lo: centerXLo),
+            centerY: DoubleDouble(hi: centerYHi, lo: centerYLo),
+            scale: DoubleDouble(hi: scaleHi, lo: scaleLo)
+        )
+    }
 
     var mode: FractalMode {
         FractalMode(rawValue: modeRawValue) ?? .mandelbrot
@@ -489,8 +514,23 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
         FractalPalette(rawValue: paletteRawValue) ?? .deepBlue
     }
 
+    var preciseZoomValue: Double? {
+        guard let scaleHi, let scaleLo else { return nil }
+
+        let preciseScale = scaleHi + scaleLo
+        let scaleMagnitude = abs(preciseScale)
+
+        guard scaleMagnitude.isFinite, scaleMagnitude > 0 else { return nil }
+
+        return mode.defaultScale / scaleMagnitude
+    }
+
     var zoomText: String {
-        formatMagnification(mode.defaultScale / max(scale, 1e-18))
+        if let preciseZoomValue {
+            return formatCompactPreciseMagnification(preciseZoomValue)
+        }
+
+        return formatMagnification(mode.defaultScale / max(scale, 1e-18))
     }
 }
 
@@ -1059,14 +1099,39 @@ The zoom overlay is visible only in the app and is not included in exports.
         }
     }
     
+    private var preciseMagnificationFactor: Double? {
+        let preciseScale = preciseViewport.scale.hi + preciseViewport.scale.lo
+        let scaleMagnitude = abs(preciseScale)
+
+        guard scaleMagnitude.isFinite, scaleMagnitude > 0 else {
+            return nil
+        }
+
+        return fractalMode.defaultScale / scaleMagnitude
+    }
+
+    private var preciseMagnificationText: String {
+        guard let preciseMagnificationFactor else {
+            return formatMagnification(fractalMode.defaultScale / max(scale, 1e-18))
+        }
+
+        return formatCompactPreciseMagnification(preciseMagnificationFactor)
+    }
+
     private func saveCurrentFavorite() {
         let newSpot = FavoriteSpot(
-            name: "\(fractalMode.shortName) · \(formatMagnification(fractalMode.defaultScale / max(scale, 1e-18)))",
+            name: "\(fractalMode.shortName) · \(preciseMagnificationText)",
             modeRawValue: fractalMode.rawValue,
             paletteRawValue: fractalPalette.rawValue,
             centerX: centerX,
             centerY: centerY,
             scale: scale,
+            centerXHi: preciseViewport.centerX.hi,
+            centerXLo: preciseViewport.centerX.lo,
+            centerYHi: preciseViewport.centerY.hi,
+            centerYLo: preciseViewport.centerY.lo,
+            scaleHi: preciseViewport.scale.hi,
+            scaleLo: preciseViewport.scale.lo,
             iterations: maxIterations,
             thumbnailPNG: makeFavoriteThumbnailPNG(
                 mode: fractalMode,
@@ -1084,13 +1149,7 @@ The zoom overlay is visible only in the app and is not included in exports.
     private func loadFavorite(_ spot: FavoriteSpot) {
         fractalMode = spot.mode
         fractalPalette = spot.palette
-        applyPreciseViewport(
-            PreciseViewport(
-                centerX: spot.centerX,
-                centerY: spot.centerY,
-                scale: spot.scale
-            )
-        )
+        applyPreciseViewport(spot.storedPreciseViewport)
         maxIterations = spot.iterations
         favoritesStore.incrementUsage(for: spot)
         showFavoritesPanel = false
@@ -1681,7 +1740,27 @@ struct MandelbrotView: View {
     }
 
     private var magnificationFactor: Double { fractalMode.defaultScale / max(scale, 1e-18) }
+
+    private var preciseMagnificationFactor: Double? {
+        let preciseScale = preciseViewport.scale.hi + preciseViewport.scale.lo
+        let scaleMagnitude = abs(preciseScale)
+
+        guard scaleMagnitude.isFinite, scaleMagnitude > 0 else {
+            return nil
+        }
+
+        return fractalMode.defaultScale / scaleMagnitude
+    }
+
     private var magnificationText: String { formatMagnification(magnificationFactor) }
+
+    private var preciseMagnificationText: String {
+        guard let preciseMagnificationFactor else {
+            return magnificationText
+        }
+
+        return formatCompactPreciseMagnification(preciseMagnificationFactor)
+    }
 
     private var precisionStatusText: String? {
         guard fractalMode.supportsHighPrecisionPreview else { return nil }
@@ -1894,7 +1973,7 @@ struct MandelbrotView: View {
                 }
 
                 HStack(alignment: .top) {
-                    Text("Zoom \(magnificationText)")
+                    Text("Zoom \(preciseMagnificationText)")
                         .font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.88)).monospacedDigit().lineLimit(1)
                         .padding(.horizontal, 10).padding(.vertical, 6).background(.ultraThinMaterial).clipShape(Capsule())
                     Spacer(minLength: 12)
@@ -4437,6 +4516,19 @@ nonisolated private func formatMagnification(_ value: Double) -> String {
     return "×\(String(format: "%.0f", value))"
 }
 
+nonisolated private func formatCompactPreciseMagnification(_ value: Double) -> String {
+    guard value.isFinite, value > 0 else {
+        return "×0"
+    }
+
+    if value < 1_000_000_000_000_000_000 {
+        return formatMagnification(value)
+    }
+
+    return "×" + String(format: "%.3e", value)
+        .replacingOccurrences(of: "e+", with: "e")
+}
+
 nonisolated private func makeCGImage(
     pixels: [UInt8],
     width: Int,
@@ -4678,7 +4770,7 @@ struct FavoritesSheet: View {
     }
 
     private func spotsZoomValue(_ spot: FavoriteSpot) -> Double {
-        spot.mode.defaultScale / max(spot.scale, 1e-18)
+        spot.preciseZoomValue ?? spot.mode.defaultScale / max(spot.scale, 1e-18)
     }
 
     var body: some View {
