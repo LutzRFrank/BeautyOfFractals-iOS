@@ -761,6 +761,32 @@ private func makeFavoriteThumbnailPNG(
     return uiImage.pngData()
 }
 
+private func makeFavoriteThumbnailPNG(from image: UIImage) -> Data? {
+    let targetSize = CGSize(width: 220, height: 138)
+    let sourceSize = image.size
+    guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+
+    let scale = max(
+        targetSize.width / sourceSize.width,
+        targetSize.height / sourceSize.height
+    )
+    let drawSize = CGSize(
+        width: sourceSize.width * scale,
+        height: sourceSize.height * scale
+    )
+    let drawOrigin = CGPoint(
+        x: (targetSize.width - drawSize.width) * 0.5,
+        y: (targetSize.height - drawSize.height) * 0.5
+    )
+
+    let renderer = UIGraphicsImageRenderer(size: targetSize)
+    let thumbnail = renderer.image { _ in
+        image.draw(in: CGRect(origin: drawOrigin, size: drawSize))
+    }
+
+    return thumbnail.pngData()
+}
+
 
 struct ContentView: View {
     @State private var fractalMode: FractalMode = .mandelbrot
@@ -786,6 +812,7 @@ struct ContentView: View {
     @State private var renderStatusPanelOffset: CGSize = .zero
     @State private var showFavoritesPanel: Bool = false
     @StateObject private var favoritesStore = FavoritesStore()
+    @State private var latestFavoriteThumbnailPNG: Data?
     @State private var navigationHistory: [ViewportSnapshot] = []
     @State private var navigationRevision: UInt = 0
 
@@ -976,7 +1003,8 @@ struct ContentView: View {
                 renderStatusPanelPinned: $renderStatusPanelPinned,
                 renderStatusPanelManuallyHidden: $renderStatusPanelManuallyHidden,
                 renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
-                renderStatusPanelOffset: $renderStatusPanelOffset
+                renderStatusPanelOffset: $renderStatusPanelOffset,
+                latestFavoriteThumbnailPNG: $latestFavoriteThumbnailPNG
             )
             #if os(macOS)
             .frame(minWidth: 900, minHeight: 650)
@@ -1044,6 +1072,12 @@ struct ContentView: View {
             reset: resetView
         ))
         #endif
+        .onChange(of: preciseViewport) {
+            latestFavoriteThumbnailPNG = nil
+        }
+        .onChange(of: fractalPalette) {
+            latestFavoriteThumbnailPNG = nil
+        }
         #if os(iOS)
         .sheet(isPresented: $showHelp) {
             HelpSheet()
@@ -1133,7 +1167,7 @@ The zoom overlay is visible only in the app and is not included in exports.
             scaleHi: preciseViewport.scale.hi,
             scaleLo: preciseViewport.scale.lo,
             iterations: maxIterations,
-            thumbnailPNG: makeFavoriteThumbnailPNG(
+            thumbnailPNG: latestFavoriteThumbnailPNG ?? makeFavoriteThumbnailPNG(
                 mode: fractalMode,
                 palette: fractalPalette,
                 centerX: centerX,
@@ -1712,6 +1746,7 @@ struct MandelbrotView: View {
     @Binding var renderStatusPanelManuallyHidden: Bool
     @Binding var renderStatusPanelIsRendering: Bool
     @Binding var renderStatusPanelOffset: CGSize
+    @Binding var latestFavoriteThumbnailPNG: Data?
 
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
@@ -1871,6 +1906,7 @@ struct MandelbrotView: View {
                                 guard state.centerX == currentViewportState.centerX && state.centerY == currentViewportState.centerY && state.scale == currentViewportState.scale else { return }
                                 visibleHighPrecisionState = state
                                 visibleHighPrecisionImage = image
+                                latestFavoriteThumbnailPNG = makeFavoriteThumbnailPNG(from: image)
                                 #if os(iOS)
                                 WatchFractalMirrorBridge.shared.publish(
                                     image: image,
