@@ -464,6 +464,23 @@ nonisolated private func shouldUseDoubleDoubleMandelbrotFinalRender(
     return pixelScale <= coordinateMagnitude.ulp * 4.0
 }
 
+nonisolated private func shouldDisableUltraExportForDeepMandelbrot(
+    mode: FractalMode,
+    preciseViewport: PreciseViewport?,
+    renderedPixelHeight: Int
+) -> Bool {
+    guard mode == .mandelbrot, let preciseViewport else { return false }
+
+    let pixelScale = abs(preciseViewport.scale.hi) / Double(max(renderedPixelHeight, 1))
+    let coordinateMagnitude = max(
+        abs(preciseViewport.centerX.hi),
+        abs(preciseViewport.centerY.hi),
+        1.0
+    )
+
+    return pixelScale <= coordinateMagnitude.ulp * 16.0
+}
+
 
 struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
     var id: UUID = UUID()
@@ -894,9 +911,11 @@ struct ContentView: View {
     }
 
     private var ultraExportUnavailableInDeepZoom: Bool {
-        guard fractalMode == .mandelbrot else { return false }
-        let preciseScale = abs(preciseViewport.scale.hi + preciseViewport.scale.lo)
-        return preciseScale.isFinite && preciseScale < highPrecisionScaleLimit
+        shouldDisableUltraExportForDeepMandelbrot(
+            mode: fractalMode,
+            preciseViewport: preciseViewport,
+            renderedPixelHeight: 1600 * 2
+        )
     }
 
     private func exportElapsedText(since startDate: Date) -> String {
