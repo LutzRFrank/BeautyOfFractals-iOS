@@ -1154,6 +1154,7 @@ struct ContentView: View {
             }
 
             renderStatusPanelVisible = false
+            clearExportStatus()
         }
         #if os(iOS)
         .sheet(isPresented: $showHelp) {
@@ -1815,6 +1816,9 @@ The zoom overlay is visible only in the app and is not included in exports.
                     exportStatusText = "failed"
                     renderStatusPanelVisible = true
                     renderStatusPanelManuallyHidden = false
+                    if !renderStatusPanelPinned {
+                        renderStatusPanelTemporaryShowID &+= 1
+                    }
                 }
                 return
             }
@@ -1832,6 +1836,9 @@ The zoom overlay is visible only in the app and is not included in exports.
                     exportStatusText = "failed"
                     renderStatusPanelVisible = true
                     renderStatusPanelManuallyHidden = false
+                    if !renderStatusPanelPinned {
+                        renderStatusPanelTemporaryShowID &+= 1
+                    }
                 }
                 return
             }
@@ -1859,6 +1866,9 @@ The zoom overlay is visible only in the app and is not included in exports.
                 exportStartDate = nil
                 renderStatusPanelVisible = true
                 renderStatusPanelManuallyHidden = false
+                if !renderStatusPanelPinned {
+                    renderStatusPanelTemporaryShowID &+= 1
+                }
                 isSavingSnapshot = false
             }
         }
