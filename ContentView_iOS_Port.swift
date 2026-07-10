@@ -829,6 +829,7 @@ struct ContentView: View {
     @State private var renderStatusPanelManuallyHidden: Bool = false
     @State private var renderStatusPanelIsRendering: Bool = false
     @State private var renderStatusPanelOffset: CGSize = .zero
+    @State private var renderStatusPanelTemporaryShowID: UInt = 0
     @State private var showFavoritesPanel: Bool = false
     @StateObject private var favoritesStore = FavoritesStore()
     @State private var latestFavoriteThumbnailPNG: Data?
@@ -1136,6 +1137,25 @@ struct ContentView: View {
             visibleHighPrecisionExportImage = nil
             clearExportStatus()
         }
+        .task(id: renderStatusPanelTemporaryShowID) {
+            guard renderStatusPanelTemporaryShowID > 0 else { return }
+
+            do {
+                try await Task.sleep(nanoseconds: 4_000_000_000)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled,
+                  renderStatusPanelVisible,
+                  !renderStatusPanelPinned,
+                  !renderStatusPanelIsRendering,
+                  exportStatusText == nil else {
+                return
+            }
+
+            renderStatusPanelVisible = false
+        }
         #if os(iOS)
         .sheet(isPresented: $showHelp) {
             HelpSheet()
@@ -1340,8 +1360,10 @@ The zoom overlay is visible only in the app and is not included in exports.
                             renderStatusPanelVisible = false
                             renderStatusPanelManuallyHidden = true
                         } else {
+                            renderStatusPanelPinned = false
                             renderStatusPanelVisible = true
                             renderStatusPanelManuallyHidden = false
+                            renderStatusPanelTemporaryShowID &+= 1
                         }
                     } label: {
                         Image(systemName: "gauge")
