@@ -1149,8 +1149,7 @@ struct ContentView: View {
             guard !Task.isCancelled,
                   renderStatusPanelVisible,
                   !renderStatusPanelPinned,
-                  !renderStatusPanelIsRendering,
-                  exportStatusText == nil else {
+                  !renderStatusPanelIsRendering else {
                 return
             }
 
