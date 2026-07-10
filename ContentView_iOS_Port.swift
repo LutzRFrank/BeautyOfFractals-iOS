@@ -1040,6 +1040,7 @@ struct ContentView: View {
                 maxIterations: $maxIterations,
                 renderQuality: renderQuality,
                 navigationStarted: recordNavigationStep,
+                clearExportStatus: clearExportStatus,
                 navigationRevision: navigationRevision,
                 renderStatusPanelVisible: $renderStatusPanelVisible,
                 renderStatusPanelPinned: $renderStatusPanelPinned,
@@ -1315,6 +1316,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                     Menu {
                         ForEach(RenderQuality.allCases) { quality in
                             Button {
+                                clearExportStatus()
                                 renderQuality = quality
                             } label: {
                                 Text("\(renderQuality == quality ? "✓ " : "   ")\(quality.rawValue)")
@@ -1466,6 +1468,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                             Double(maxIterations)
                         },
                         set: {
+                            clearExportStatus()
                             maxIterations = Int(($0 / 100).rounded()) * 100
                         }
                     ),
@@ -1475,6 +1478,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                 
                 HStack(spacing: 0) {
                     Button {
+                        clearExportStatus()
                         maxIterations = max(300, maxIterations - 100)
                     } label: {
                         Image(systemName: "minus")
@@ -1488,6 +1492,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                         .frame(height: isCompact ? 18 : 20)
 
                     Button {
+                        clearExportStatus()
                         maxIterations = min(24_000, maxIterations + 100)
                     } label: {
                         Image(systemName: "plus")
@@ -1537,6 +1542,8 @@ The zoom overlay is visible only in the app and is not included in exports.
     }
 
     private func recordNavigationStep() {
+        clearExportStatus()
+
         let snapshot = currentViewportSnapshot()
         guard navigationHistory.last != snapshot else { return }
         navigationHistory.append(snapshot)
@@ -1858,6 +1865,7 @@ struct MandelbrotView: View {
     @Binding var maxIterations: Int
     let renderQuality: RenderQuality
     let navigationStarted: () -> Void
+    let clearExportStatus: () -> Void
     let navigationRevision: UInt
     @Binding var renderStatusPanelVisible: Bool
     @Binding var renderStatusPanelPinned: Bool
@@ -2337,6 +2345,7 @@ struct MandelbrotView: View {
     }
 
     private func applyPreciseViewport(_ viewport: PreciseViewport) {
+        clearExportStatus()
         preciseViewport = viewport
 
         let projection = viewport.doubleProjection
