@@ -203,7 +203,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
         case .celtic:
             return "Celtic Mandelbrot"
         case .power2, .power3, .power4, .power5, .power6, .power7, .power8, .power9, .power10, .power11, .power12:
-            return "Power of \(powerExponent!)"
+            return "Powerⁿ"
         }
     }
     
@@ -232,7 +232,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
         case .celtic:
             return "Celtic"
         case .power2, .power3, .power4, .power5, .power6, .power7, .power8, .power9, .power10, .power11, .power12:
-            return "Power of \(powerExponent!)"
+            return "Powerⁿ"
         }
     }
     
@@ -1376,17 +1376,31 @@ The zoom overlay is visible only in the app and is not included in exports.
                     }
 
                     if let exponent = fractalMode.powerExponent {
-                        Text("n \(exponent)")
-                            .monospacedDigit()
-                        Slider(
-                            value: Binding(
-                                get: { Double(exponent) },
-                                set: { fractalMode = .power(Int($0.rounded())) }
-                            ),
-                        in: 2...12,
-                            step: 1
-                        )
-                        .frame(width: isCompact ? 110 : 150)
+                        HStack(spacing: 3) {
+                            Button {
+                                clearExportStatus()
+                                fractalMode = .power(exponent - 1)
+                            } label: {
+                                Image(systemName: "chevron.left")
+                            }
+                            .disabled(exponent <= 2)
+                            .accessibilityLabel("Decrease power")
+
+                            Text("\(exponent)")
+                                .monospacedDigit()
+                                .frame(minWidth: 20)
+                                .accessibilityLabel("Power \(exponent)")
+
+                            Button {
+                                clearExportStatus()
+                                fractalMode = .power(exponent + 1)
+                            } label: {
+                                Image(systemName: "chevron.right")
+                            }
+                            .disabled(exponent >= 12)
+                            .accessibilityLabel("Increase power")
+                        }
+                        .font(.system(size: isCompact ? 13 : 15, weight: .semibold))
                     }
                     
                     Menu {
