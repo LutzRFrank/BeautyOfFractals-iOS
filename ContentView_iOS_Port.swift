@@ -140,6 +140,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
     case newton = 8
     case eightRainbows = 9
     case celtic = 10
+    case power4 = 11
     
     var id: Int {
         rawValue
@@ -169,6 +170,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Eight Rainbows"
         case .celtic:
             return "Celtic Mandelbrot"
+        case .power4:
+            return "Power of 4"
         }
     }
     
@@ -196,6 +199,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Rainbows"
         case .celtic:
             return "Celtic"
+        case .power4:
+            return "Power of 4"
         }
     }
     
@@ -223,6 +228,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "EightRainbows"
         case .celtic:
             return "CelticMandelbrot"
+        case .power4:
+            return "Power4"
         }
     }
     
@@ -250,6 +257,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return 0.0
         case .celtic:
             return -0.5
+        case .power4:
+            return 0.0
         }
     }
     
@@ -276,6 +285,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
         case .eightRainbows:
             return 0.0
         case .celtic:
+            return 0.0
+        case .power4:
             return 0.0
         }
     }
@@ -304,12 +315,14 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return 3.0
         case .celtic:
             return 3.0
+        case .power4:
+            return 2.5
         }
     }
     
     var supportsHighPrecisionPreview: Bool {
         switch self {
-        case .mandelbrot, .mandelbrotRelief, .julia, .burningShip, .tricorn, .kleinian, .newton, .eightRainbows, .celtic:
+        case .mandelbrot, .mandelbrotRelief, .julia, .burningShip, .tricorn, .kleinian, .newton, .eightRainbows, .celtic, .power4:
             return true
         case .mandelbulb3D, .mandelbox3D:
             return false
@@ -333,6 +346,7 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
     case deepCurrent = 12
     case auric = 13
     case aurora = 14
+    case pearl = 15
     
     var id: Int {
         rawValue
@@ -370,6 +384,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "Auric"
         case .aurora:
             return "Aurora"
+        case .pearl:
+            return "Pearl"
         }
     }
     
@@ -405,6 +421,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "Auric"
         case .aurora:
             return "Aurora"
+        case .pearl:
+            return "Pearl"
         }
     }
 }
@@ -1184,7 +1202,7 @@ struct ContentView: View {
         } message: {
             Text("""
 Modes:
-Explore Mandelbrot, Celtic Mandelbrot, Julia, Eight Rainbows, Burning Ship, Tricorn, Kleinian Relief, Mandelbrot Relief, Mandelbulb 3D, Mandelbox 3D and Newton Fractal.
+Explore Mandelbrot, Power of 4, Celtic Mandelbrot, Julia, Eight Rainbows, Burning Ship, Tricorn, Kleinian Relief, Mandelbrot Relief, Mandelbulb 3D, Mandelbox 3D and Newton Fractal.
 
 Palettes:
 Choose a palette from the Palette menu. Available palettes depend on the selected mode.
@@ -1300,6 +1318,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                 HStack(spacing: isCompact ? 6 : 8) {
                     Menu {
                         modeMenuButton(.mandelbrot)
+                        modeMenuButton(.power4)
                         modeMenuButton(.celtic)
                         modeMenuButton(.julia)
                         modeMenuButton(.eightRainbows)
@@ -4106,6 +4125,9 @@ nonisolated private func calculateNewtonColor(
         } else {
             rootColor = (0.92, 0.62, 0.16)
         }
+    case .pearl:
+        rootColor = nearestRootIndex == 0 ? (0.02, 0.025, 0.03) : (0.92, 0.93, 0.91)
+
     case .auric:
         if nearestRootIndex == 0 {
             rootColor = (0.03, 0.025, 0.020)
@@ -4167,7 +4189,7 @@ nonisolated private func calculateFractalIteration(
     var cy: Double
     
     switch mode {
-    case .mandelbrot, .mandelbrotRelief, .celtic, .eightRainbows:
+    case .mandelbrot, .mandelbrotRelief, .celtic, .eightRainbows, .power4:
         x = 0.0
         y = 0.0
         cx = x0
@@ -4226,6 +4248,12 @@ nonisolated private func calculateFractalIteration(
             let y4 = 2.0 * x2 * y2
             x = x4 * x4 - y4 * y4 + cx
             y = 2.0 * x4 * y4 + cy
+
+        case .power4:
+            let x2 = x * x - y * y
+            let y2 = 2.0 * x * y
+            x = x2 * x2 - y2 * y2 + cx
+            y = 2.0 * x2 * y2 + cy
             
         case .burningShip:
             let ax = abs(x)
@@ -4619,6 +4647,18 @@ nonisolated private func paletteBaseColor(
             clamp01(base.2 * lift + 0.80 * iceEdge + 0.05 * goldEdge)
         )
 
+    case .pearl:
+        let body = pow(relief, 0.58)
+        let detail = pow(ridge, 2.40)
+        let sparkle = pow(ridge, 9.0)
+        let light = pow(glow, 1.10)
+        let crack = pow(1.0 - clamp01(relief * 0.84 + glow * 0.36), 2.10) * pow(ridge, 1.25)
+        let tone = clamp01(0.035 + 0.70 * body + 0.18 * light)
+        var gray = tone < 0.58 ? 0.02 + 0.48 * tone / 0.58 : 0.50 + 0.42 * (tone - 0.58) / 0.42
+        gray += 0.34 * detail + 0.44 * sparkle
+        gray = gray + (0.025 - gray) * 0.48 * crack
+        return (clamp01(gray), clamp01(gray * 1.01), clamp01(gray * 1.03))
+
     case .auric:
         let body = pow(relief, 0.58)
         let ridgeGold = pow(ridge, 2.40)
@@ -4680,7 +4720,11 @@ nonisolated private func insideColor(
     mode: FractalMode,
     palette: FractalPalette
 ) -> (r: Double, g: Double, b: Double) {
-    
+
+    if palette == .pearl && (mode == .mandelbrot || mode == .mandelbrotRelief || mode == .power4) {
+        return (0.94, 0.95, 0.93)
+    }
+
     if mode == .mandelbrot || mode == .mandelbrotRelief {
         if palette == .auric {
             return (0.560, 0.345, 0.085)
@@ -4717,6 +4761,8 @@ nonisolated private func insideColor(
             return (0.003, 0.012, 0.060)
         case .deepCurrent:
             return (0.004, 0.016, 0.072)
+        case .pearl:
+            return (0.82, 0.84, 0.86)
         case .auric:
             return (0.560, 0.345, 0.085)
         case .aurora:
@@ -4981,7 +5027,7 @@ private struct HelpSheet: View {
                         HelpSection(
                             title: "Modes",
                             content: """
-Explore Mandelbrot, Celtic Mandelbrot, Julia, Eight Rainbows, Burning Ship, Tricorn, Kleinian Relief, Mandelbrot Relief, Mandelbulb 3D, Mandelbox 3D and Newton Fractal.
+Explore Mandelbrot, Power of 4, Celtic Mandelbrot, Julia, Eight Rainbows, Burning Ship, Tricorn, Kleinian Relief, Mandelbrot Relief, Mandelbulb 3D, Mandelbox 3D and Newton Fractal.
 """
                         )
 
