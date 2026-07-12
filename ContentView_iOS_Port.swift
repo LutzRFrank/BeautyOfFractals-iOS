@@ -3387,7 +3387,10 @@ nonisolated func renderFractalSupersampled(
                         )
                         
                         if iteration == maxIterations {
-                            if palette == .pearl,
+                            if palette == .motherOfPearl,
+                               mode == .mandelbrot || mode == .mandelbrotRelief || mode.powerExponent != nil {
+                                color = motherOfPearlInteriorColor(normalizedX: sampleX / Double(sampleWidth), normalizedY: sampleY / Double(sampleHeight))
+                            } else if palette == .pearl,
                                mode == .mandelbrot || mode == .mandelbrotRelief || mode.powerExponent != nil {
                                 color = pearlInteriorColor(
                                     normalizedX: sampleX / Double(sampleWidth),
@@ -3541,7 +3544,9 @@ nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
                 let color: (r: Double, g: Double, b: Double)
 
                 if iteration == localMaxIterations {
-                    if palette == .pearl {
+                    if palette == .motherOfPearl {
+                        color = motherOfPearlInteriorColor(normalizedX: (Double(px) + 0.5) / Double(width), normalizedY: (Double(py) + 0.5) / Double(height))
+                    } else if palette == .pearl {
                         color = pearlInteriorColor(
                             normalizedX: (Double(px) + 0.5) / Double(width),
                             normalizedY: (Double(py) + 0.5) / Double(height)
@@ -3675,7 +3680,10 @@ nonisolated func renderFractal(
                 }
                 
                 if iteration == localMaxIterations {
-                    if palette == .pearl,
+                    if palette == .motherOfPearl,
+                       mode == .mandelbrot || mode == .mandelbrotRelief || mode.powerExponent != nil {
+                        color = motherOfPearlInteriorColor(normalizedX: (Double(px) + 0.5) / Double(width), normalizedY: (Double(py) + 0.5) / Double(height))
+                    } else if palette == .pearl,
                        mode == .mandelbrot || mode == .mandelbrotRelief || mode.powerExponent != nil {
                         color = pearlInteriorColor(
                             normalizedX: (Double(px) + 0.5) / Double(width),
@@ -4824,6 +4832,10 @@ nonisolated private func insideColor(
         return (0.94, 0.95, 0.93)
     }
 
+    if palette == .motherOfPearl && (mode == .mandelbrot || mode == .mandelbrotRelief || mode.powerExponent != nil) {
+        return (0.96, 0.93, 0.86)
+    }
+
     if palette == .auric && mode.powerExponent != nil {
         return (0.560, 0.345, 0.085)
     }
@@ -4964,6 +4976,13 @@ nonisolated private func pearlInteriorColor(
     var tone = 0.88 + (stone - 0.5) * 0.09 + 0.060 * facet + 0.12 * highlight
     tone -= 0.20 * vein + 0.065 * fineVein + 0.10 * edgeShade
     return (clamp01(tone * 1.015), clamp01(tone * 1.020), clamp01(tone * 1.010))
+}
+
+nonisolated private func motherOfPearlInteriorColor(normalizedX: Double, normalizedY: Double) -> (r: Double, g: Double, b: Double) {
+    let marble = pearlInteriorColor(normalizedX: normalizedX, normalizedY: normalizedY)
+    let rose = 0.5 + 0.5 * sin(19.0 * normalizedX + 7.0 * normalizedY)
+    let ice = 0.5 + 0.5 * sin(11.0 * normalizedX - 17.0 * normalizedY)
+    return (clamp01(marble.r + 0.055 * rose), clamp01(marble.g + 0.025), clamp01(marble.b + 0.060 * ice))
 }
 
 nonisolated private func complexMul(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> SIMD2<Double> {
