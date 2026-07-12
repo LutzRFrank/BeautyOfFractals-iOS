@@ -379,6 +379,7 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
     case auric = 13
     case aurora = 14
     case pearl = 15
+    case motherOfPearl = 16
     
     var id: Int {
         rawValue
@@ -417,6 +418,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
         case .aurora:
             return "Aurora"
         case .pearl:
+            return "Marble"
+        case .motherOfPearl:
             return "Pearl"
         }
     }
@@ -454,6 +457,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
         case .aurora:
             return "Aurora"
         case .pearl:
+            return "Marble"
+        case .motherOfPearl:
             return "Pearl"
         }
     }
@@ -4204,6 +4209,8 @@ nonisolated private func calculateNewtonColor(
         }
     case .pearl:
         rootColor = nearestRootIndex == 0 ? (0.02, 0.025, 0.03) : (0.92, 0.93, 0.91)
+    case .motherOfPearl:
+        rootColor = nearestRootIndex == 0 ? (0.04, 0.04, 0.06) : (0.94, 0.91, 0.82)
 
     case .auric:
         if nearestRootIndex == 0 {
@@ -4744,6 +4751,13 @@ nonisolated private func paletteBaseColor(
         gray = gray + (0.025 - gray) * 0.48 * crack
         return (clamp01(gray), clamp01(gray * 1.01), clamp01(gray * 1.03))
 
+    case .motherOfPearl:
+        let body = pow(relief, 0.58)
+        let detail = pow(ridge, 2.4)
+        let sheen = 0.5 + 0.5 * sin(8.0 * relief + 11.0 * glow + 17.0 * ridge)
+        let gray = clamp01(0.04 + 0.72 * body + 0.22 * detail)
+        return (clamp01(gray + 0.07 * sheen), clamp01(gray + 0.045), clamp01(gray + 0.08 * (1.0 - sheen)))
+
     case .auric:
         let body = pow(relief, 0.58)
         let ridgeGold = pow(ridge, 2.40)
@@ -4852,6 +4866,8 @@ nonisolated private func insideColor(
             return (0.004, 0.016, 0.072)
         case .pearl:
             return (0.82, 0.84, 0.86)
+        case .motherOfPearl:
+            return (0.93, 0.90, 0.84)
         case .auric:
             return (0.560, 0.345, 0.085)
         case .aurora:
