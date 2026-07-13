@@ -992,8 +992,12 @@ struct ContentView: View {
             renderQuality: renderQuality,
             scale: scale,
             defaultScale: fractalMode.defaultScale,
-            cap: renderQuality == .deep ? 100_000 : 80_000
+            cap: renderQuality == .deep ? 128_000 : 80_000
         )
+    }
+
+    private var maximumBaseIterations: Int {
+        renderQuality == .deep ? 32_000 : 24_000
     }
     
     private var exportIterationCap: Int {
@@ -1501,6 +1505,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                             Button {
                                 clearExportStatus()
                                 renderQuality = quality
+                                maxIterations = min(maxIterations, maximumBaseIterations)
                             } label: {
                                 Text("\(renderQuality == quality ? "✓ " : "   ")\(quality.rawValue)")
                             }
@@ -1657,7 +1662,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                             maxIterations = Int(($0 / 100).rounded()) * 100
                         }
                     ),
-                    in: 300...24000
+                    in: 300...Double(maximumBaseIterations)
                 )
                 .frame(minWidth: 80)
                 
@@ -1678,13 +1683,13 @@ The zoom overlay is visible only in the app and is not included in exports.
 
                     Button {
                         clearExportStatus()
-                        maxIterations = min(24_000, maxIterations + 100)
+                        maxIterations = min(maximumBaseIterations, maxIterations + 100)
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: isCompact ? 13 : 15, weight: .semibold))
                             .frame(width: isCompact ? 34 : 38, height: isCompact ? 28 : 32)
                     }
-                    .disabled(maxIterations >= 24_000)
+                    .disabled(maxIterations >= maximumBaseIterations)
                     .accessibilityLabel("Increase iterations")
                 }
                 .foregroundStyle(.blue)
@@ -2151,7 +2156,7 @@ struct MandelbrotView: View {
     }
 
     private var effectiveIterations: Int {
-        effectiveIterationCount(baseIterations: maxIterations, renderQuality: renderQuality, scale: scale, defaultScale: fractalMode.defaultScale, cap: 100_000)
+        effectiveIterationCount(baseIterations: maxIterations, renderQuality: renderQuality, scale: scale, defaultScale: fractalMode.defaultScale, cap: renderQuality == .deep ? 128_000 : 80_000)
     }
 
     private var interactionPreviewIterations: Int { max(300, min(effectiveIterations, Int(Double(effectiveIterations) * 0.25))) }
