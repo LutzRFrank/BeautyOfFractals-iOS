@@ -28,6 +28,8 @@ private let highPrecisionPreviewMaxPixelHeight: Int = 1200
 // fast Direct Double renders.
 private let doubleDoublePreviewMaxPixelWidth: Int = 960
 private let doubleDoublePreviewMaxPixelHeight: Int = 640
+private let tripleDoublePreviewMaxPixelWidth: Int = 640
+private let tripleDoublePreviewMaxPixelHeight: Int = 720
 private let deepCPUPreviewScaleLimit: Double = 0.00001
 private let deepCPUPreviewMaxPixelWidth: Int = 720
 private let deepCPUPreviewMaxPixelHeight: Int = 480
@@ -521,7 +523,30 @@ nonisolated private func shouldUseDoubleDoubleMandelbrotFinalRender(
         1.0
     )
 
+    let extremePrecisionResolution =
+        coordinateMagnitude.ulp * coordinateMagnitude.ulp * 16.0
     return pixelScale <= coordinateMagnitude.ulp * 4.0
+        && pixelScale > extremePrecisionResolution
+}
+
+nonisolated private func shouldUseTripleDoubleMandelbrotFinalRender(
+    mode: FractalMode,
+    preciseViewport: PreciseViewport?,
+    renderedPixelHeight: Int
+) -> Bool {
+    guard mode == .mandelbrot, let preciseViewport else { return false }
+
+    let pixelScale = abs(preciseViewport.scale.hi)
+        / Double(max(renderedPixelHeight, 1))
+    let coordinateMagnitude = max(
+        abs(preciseViewport.centerX.hi),
+        abs(preciseViewport.centerY.hi),
+        1.0
+    )
+    let extremePrecisionResolution =
+        coordinateMagnitude.ulp * coordinateMagnitude.ulp * 16.0
+
+    return pixelScale <= extremePrecisionResolution
 }
 
 nonisolated private func shouldDisableUltraExportForDeepMandelbrot(
@@ -551,16 +576,20 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
     var centerY: Double
     var scale: Double
     var centerXHi: Double? = nil
+    var centerXMid: Double? = nil
     var centerXLo: Double? = nil
     var centerYHi: Double? = nil
+    var centerYMid: Double? = nil
     var centerYLo: Double? = nil
     var scaleHi: Double? = nil
+    var scaleMid: Double? = nil
     var scaleLo: Double? = nil
     var iterations: Int
+    var renderQualityRawValue: String? = nil
     var created: Date = Date()
     var updated: Date = Date()
     var deleted: Bool = false
-    var schemaVersion: Int = 1
+    var schemaVersion: Int = 4
     var thumbnailPNG: Data? = nil
     var usageCount: Int = 0
 
@@ -576,10 +605,32 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
             return PreciseViewport(centerX: centerX, centerY: centerY, scale: scale)
         }
 
+        if schemaVersion >= 3 {
+            return PreciseViewport(
+                centerX: TripleDouble(
+                    hi: centerXHi,
+                    mid: centerXMid ?? 0.0,
+                    lo: centerXLo
+                ),
+                centerY: TripleDouble(
+                    hi: centerYHi,
+                    mid: centerYMid ?? 0.0,
+                    lo: centerYLo
+                ),
+                scale: TripleDouble(
+                    hi: scaleHi,
+                    mid: scaleMid ?? 0.0,
+                    lo: scaleLo
+                )
+            )
+        }
+
+        // Legacy favorites stored Double-Double as hi/lo. Preserve that lo as
+        // the new middle component instead of demoting its precision.
         return PreciseViewport(
-            centerX: DoubleDouble(hi: centerXHi, lo: centerXLo),
-            centerY: DoubleDouble(hi: centerYHi, lo: centerYLo),
-            scale: DoubleDouble(hi: scaleHi, lo: scaleLo)
+            centerX: TripleDouble(hi: centerXHi, mid: centerXLo, lo: 0.0),
+            centerY: TripleDouble(hi: centerYHi, mid: centerYLo, lo: 0.0),
+            scale: TripleDouble(hi: scaleHi, mid: scaleLo, lo: 0.0)
         )
     }
 
@@ -591,10 +642,25 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
         FractalPalette(rawValue: paletteRawValue) ?? .deepBlue
     }
 
+    var storedRenderQuality: RenderQuality? {
+        renderQualityRawValue.flatMap(RenderQuality.init(rawValue:))
+    }
+
+    var displayedIterations: Int {
+        guard let storedRenderQuality else { return iterations }
+        return effectiveIterationCount(
+            baseIterations: iterations,
+            renderQuality: storedRenderQuality,
+            scale: scale,
+            defaultScale: mode.defaultScale,
+            cap: storedRenderQuality == .deep ? 100_000 : 80_000
+        )
+    }
+
     var preciseZoomValue: Double? {
         guard let scaleHi, let scaleLo else { return nil }
 
-        let preciseScale = scaleHi + scaleLo
+        let preciseScale = scaleHi + (scaleMid ?? scaleLo)
         let scaleMagnitude = abs(preciseScale)
 
         guard scaleMagnitude.isFinite, scaleMagnitude > 0 else { return nil }
@@ -656,7 +722,7 @@ final class FavoritesStore: ObservableObject {
         newSpot.created = now
         newSpot.updated = now
         newSpot.deleted = false
-        newSpot.schemaVersion = 1
+        newSpot.schemaVersion = 4
         spots.insert(newSpot, at: 0)
         save()
     }
@@ -784,7 +850,7 @@ final class FavoritesStore: ObservableObject {
         }
 
         let cloudFile = FavoriteSpotsCloudFile(
-            schemaVersion: 1,
+            schemaVersion: 4,
             updated: Date(),
             favorites: spots
         )
@@ -1310,12 +1376,17 @@ The zoom overlay is visible only in the app and is not included in exports.
             centerY: centerY,
             scale: scale,
             centerXHi: preciseViewport.centerX.hi,
+            centerXMid: preciseViewport.centerX.mid,
             centerXLo: preciseViewport.centerX.lo,
             centerYHi: preciseViewport.centerY.hi,
+            centerYMid: preciseViewport.centerY.mid,
             centerYLo: preciseViewport.centerY.lo,
             scaleHi: preciseViewport.scale.hi,
+            scaleMid: preciseViewport.scale.mid,
             scaleLo: preciseViewport.scale.lo,
             iterations: maxIterations,
+            renderQualityRawValue: renderQuality.rawValue,
+            schemaVersion: 4,
             thumbnailPNG: latestFavoriteThumbnailPNG ?? makeFavoriteThumbnailPNG(
                 mode: fractalMode,
                 palette: fractalPalette,
@@ -1334,6 +1405,9 @@ The zoom overlay is visible only in the app and is not included in exports.
         fractalPalette = spot.palette
         applyPreciseViewport(spot.storedPreciseViewport)
         maxIterations = spot.iterations
+        if let storedRenderQuality = spot.storedRenderQuality {
+            renderQuality = storedRenderQuality
+        }
         favoritesStore.incrementUsage(for: spot)
         showFavoritesPanel = false
     }
@@ -1763,7 +1837,19 @@ The zoom overlay is visible only in the app and is not included in exports.
         #else
         let snapshotSupersampling = max(1, min(supersampling, 2))
         #endif
-        let snapshotIterations = snapshotSupersampling > 1 ? ultraExportEffectiveIterations : exportEffectiveIterations
+        let snapshotTripleDoubleEnabled = snapshotSupersampling == 1 && shouldUseTripleDoubleMandelbrotFinalRender(
+            mode: snapshotMode,
+            preciseViewport: snapshotPreciseViewport,
+            renderedPixelHeight: exportHeight
+        )
+        let requestedExportIterations = snapshotSupersampling > 1
+            ? ultraExportEffectiveIterations
+            : exportEffectiveIterations
+        // A deep export must not classify pixels as interior merely because its
+        // export preset is lower than the already validated live iteration cap.
+        let snapshotIterations = snapshotTripleDoubleEnabled
+            ? max(requestedExportIterations, effectiveIterations)
+            : requestedExportIterations
         let snapshotExportSuffix = snapshotSupersampling > 1 ? "-Ultra\(snapshotSupersampling)x" : ""
         let snapshotDoubleDoubleEnabled = snapshotSupersampling == 1 && shouldUseDoubleDoubleMandelbrotFinalRender(
             mode: snapshotMode,
@@ -1819,6 +1905,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                 supersampling: snapshotSupersampling,
                 iterations: snapshotIterations,
                 doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
+                tripleDoubleEnabled: snapshotTripleDoubleEnabled,
                 cachedHighPrecisionImage: snapshotCachedHighPrecisionImage
             )
         }
@@ -1837,6 +1924,7 @@ The zoom overlay is visible only in the app and is not included in exports.
             supersampling: snapshotSupersampling,
             iterations: snapshotIterations,
             doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
+            tripleDoubleEnabled: snapshotTripleDoubleEnabled,
             cachedHighPrecisionImage: snapshotCachedHighPrecisionImage
         )
         #endif
@@ -1855,6 +1943,7 @@ The zoom overlay is visible only in the app and is not included in exports.
         supersampling snapshotSupersampling: Int,
         iterations snapshotIterations: Int,
         doubleDoubleEnabled snapshotDoubleDoubleEnabled: Bool,
+        tripleDoubleEnabled snapshotTripleDoubleEnabled: Bool,
         cachedHighPrecisionImage: CGImage? = nil
     ) {
         isSavingSnapshot = true
@@ -1894,7 +1983,8 @@ The zoom overlay is visible only in the app and is not included in exports.
                     scale: snapshotScale,
                     preciseViewport: snapshotPreciseViewport,
                     maxIterations: snapshotIterations,
-                    doubleDoubleEnabled: snapshotDoubleDoubleEnabled
+                    doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
+                    tripleDoubleEnabled: snapshotTripleDoubleEnabled
                 )
             }
             
@@ -2048,7 +2138,13 @@ struct MandelbrotView: View {
 
     private var precisionStatusText: String? {
         guard fractalMode.supportsHighPrecisionPreview else { return nil }
-        if useDeepCPUPreview { return "High Precision · CPU Deep Zoom" }
+        if useDeepCPUPreview {
+            let isExperimental = preciseMagnificationFactor.map {
+                log10($0) >= 39.0
+            } ?? false
+            return "High Precision · CPU Deep Zoom"
+                + (isExperimental ? " · Experimental" : "")
+        }
         if magnificationFactor >= 50_000_000_000 { return "High Precision · Extreme Zoom" }
         if magnificationFactor >= 10_000_000_000 { return "High Precision · Near Limit" }
         return useHighPrecisionPreview ? "High Precision" : nil
@@ -3115,9 +3211,19 @@ struct HighPrecisionFractalPreview: View {
         lastRenderDurationText = nil
         renderStatusPanelManuallyHidden = false
         isRendering = true
+        let expectedFinalPixelHeight = min(
+            max(Int(viewSize.height.rounded()), 1),
+            highPrecisionPreviewMaxPixelHeight
+        )
+        let usesTripleDoubleFinalRender =
+            shouldUseTripleDoubleMandelbrotFinalRender(
+                mode: mode,
+                preciseViewport: requestPreciseViewport,
+                renderedPixelHeight: expectedFinalPixelHeight
+            )
         do { try await Task.sleep(nanoseconds: refinementDebounceNanoseconds) } catch { return }
         guard !Task.isCancelled, refinementEnabled, requestID == renderID else { return }
-        if progressiveCPUPreview {
+        if progressiveCPUPreview, !usesTripleDoubleFinalRender {
             let zoomLevel = fractalMode.defaultScale / max(scale, 1e-18)
             let previewStages: [(width: Int, height: Int, iterationScale: Double)]
 
@@ -3214,12 +3320,19 @@ struct HighPrecisionFractalPreview: View {
             maxWidth: highPrecisionPreviewMaxPixelWidth,
             maxHeight: highPrecisionPreviewMaxPixelHeight
         )
-        let usesDoubleDoubleFinalRender = shouldUseDoubleDoubleMandelbrotFinalRender(
+        let usesDoubleDoubleFinalRender = !usesTripleDoubleFinalRender
+            && shouldUseDoubleDoubleMandelbrotFinalRender(
             mode: mode,
             preciseViewport: requestPreciseViewport,
             renderedPixelHeight: normalFinalSize.height
         )
-        let size = usesDoubleDoubleFinalRender
+        let size = usesTripleDoubleFinalRender
+            ? cappedRenderSize(
+                for: viewSize,
+                maxWidth: tripleDoublePreviewMaxPixelWidth,
+                maxHeight: tripleDoublePreviewMaxPixelHeight
+            )
+            : usesDoubleDoubleFinalRender
             ? cappedRenderSize(
                 for: viewSize,
                 maxWidth: doubleDoublePreviewMaxPixelWidth,
@@ -3228,7 +3341,7 @@ struct HighPrecisionFractalPreview: View {
             : normalFinalSize
         renderProgress = max(renderProgress, 0.82)
 
-        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, preciseViewport: requestPreciseViewport, maxIterations: finalRenderIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995, doubleDoubleEnabled: usesDoubleDoubleFinalRender) {
+        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, preciseViewport: requestPreciseViewport, maxIterations: finalRenderIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995, doubleDoubleEnabled: usesDoubleDoubleFinalRender, tripleDoubleEnabled: usesTripleDoubleFinalRender) {
             let platformImage = makePlatformImage(image, width: size.width, height: size.height)
             self.image = platformImage
             onImagePublished(
@@ -3261,7 +3374,7 @@ struct HighPrecisionFractalPreview: View {
         #endif
     }
 
-    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, preciseViewport: PreciseViewport? = nil, maxIterations: Int, requestID: String, progressStart: Double? = nil, progressEnd: Double? = nil, doubleDoubleEnabled: Bool = false) async -> CGImage? {
+    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, preciseViewport: PreciseViewport? = nil, maxIterations: Int, requestID: String, progressStart: Double? = nil, progressEnd: Double? = nil, doubleDoubleEnabled: Bool = false, tripleDoubleEnabled: Bool = false) async -> CGImage? {
         let aspect = viewportAspectRatio
         let worker = Task.detached(priority: .userInitiated) {
             renderFractal(
@@ -3276,6 +3389,7 @@ struct HighPrecisionFractalPreview: View {
                 maxIterations: maxIterations,
                 viewportAspectRatio: aspect,
                 doubleDoubleEnabled: doubleDoubleEnabled,
+                tripleDoubleEnabled: tripleDoubleEnabled,
                 progressCallback: { progress in
                     guard let progressStart, let progressEnd else { return }
                     Task { @MainActor in
@@ -3313,7 +3427,8 @@ nonisolated func renderFractalSupersampled(
     scale: Double,
     preciseViewport: PreciseViewport? = nil,
     maxIterations: Int,
-    doubleDoubleEnabled: Bool = false
+    doubleDoubleEnabled: Bool = false,
+    tripleDoubleEnabled: Bool = false
 ) -> CGImage? {
     let factor = max(1, min(supersampling, 3))
     
@@ -3328,7 +3443,8 @@ nonisolated func renderFractalSupersampled(
             scale: scale,
             preciseViewport: preciseViewport,
             maxIterations: maxIterations,
-            doubleDoubleEnabled: doubleDoubleEnabled
+            doubleDoubleEnabled: doubleDoubleEnabled,
+            tripleDoubleEnabled: tripleDoubleEnabled
         )
     }
     
@@ -3522,8 +3638,8 @@ nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
 
                 var localMaxIterations = maxIterations
                 var iteration = calculateMandelbrotIterationDoubleDouble(
-                    cX: x0,
-                    cY: y0,
+                    cX: x0.doubleDoubleValue,
+                    cY: y0.doubleDoubleValue,
                     maxIterations: localMaxIterations
                 )
 
@@ -3535,8 +3651,8 @@ nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
                 ) {
                     localMaxIterations = min(maxIterations + maxIterations / 2, 120_000)
                     iteration = calculateMandelbrotIterationDoubleDouble(
-                        cX: x0,
-                        cY: y0,
+                        cX: x0.doubleDoubleValue,
+                        cY: y0.doubleDoubleValue,
                         maxIterations: localMaxIterations
                     )
                 }
@@ -3598,6 +3714,114 @@ nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
     )
 }
 
+nonisolated private func renderMandelbrotTripleDoubleParallel(
+    width: Int,
+    height: Int,
+    palette: FractalPalette,
+    preciseViewport: PreciseViewport,
+    maxIterations: Int,
+    viewportAspectRatio: Double,
+    progressCallback: (@Sendable (Double) -> Void)? = nil
+) -> CGImage? {
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    let bitsPerComponent = 8
+    let byteCount = width * height * bytesPerPixel
+    let storage = DirectRenderPixelStorage(byteCount: byteCount)
+
+    let tripleViewport = TripleDoubleViewport(preciseViewport)
+    let references = TripleDoublePerturbation.makeReferenceGrid(
+        viewport: tripleViewport,
+        aspectRatio: viewportAspectRatio,
+        maxIterations: maxIterations
+    )
+    let projectedScale = tripleViewport.scale.doubleValue
+    let processorCount = max(1, ProcessInfo.processInfo.activeProcessorCount)
+    let bandCount = min(height, max(2, processorCount * 8))
+    let rowsPerBand = (height + bandCount - 1) / bandCount
+    let bandProgress = progressCallback.map {
+        DirectRenderBandProgress(totalBands: bandCount, report: $0)
+    }
+    let pixelWidth = Double(width)
+    let pixelHeight = Double(height)
+
+    DispatchQueue.concurrentPerform(iterations: bandCount) { bandIndex in
+        let startRow = bandIndex * rowsPerBand
+        let endRow = min(startRow + rowsPerBand, height)
+        guard startRow < endRow else { return }
+
+        for py in startRow..<endRow {
+            if Task.isCancelled { return }
+            let verticalOffset = (Double(py) + 0.5) / pixelHeight - 0.5
+
+            for px in 0..<width {
+                if px.isMultiple(of: 64), Task.isCancelled { return }
+                let horizontalOffset =
+                    ((Double(px) + 0.5) / pixelWidth - 0.5)
+                    * viewportAspectRatio
+                let iteration = TripleDoublePerturbation.iterationWithLocalRebase(
+                    horizontalOffset: horizontalOffset,
+                    verticalOffset: verticalOffset,
+                    scale: projectedScale,
+                    references: references,
+                    maxIterations: maxIterations
+                )
+                let normalizedX = (Double(px) + 0.5) / pixelWidth
+                let normalizedY = (Double(py) + 0.5) / pixelHeight
+                let color: (r: Double, g: Double, b: Double)
+
+                if iteration == maxIterations {
+                    if palette == .motherOfPearl {
+                        color = motherOfPearlInteriorColor(
+                            normalizedX: normalizedX,
+                            normalizedY: normalizedY
+                        )
+                    } else if palette == .pearl {
+                        color = pearlInteriorColor(
+                            normalizedX: normalizedX,
+                            normalizedY: normalizedY
+                        )
+                    } else if palette == .auric {
+                        color = auricInteriorColor(
+                            normalizedX: normalizedX,
+                            normalizedY: normalizedY
+                        )
+                    } else {
+                        color = insideColor(mode: .mandelbrot, palette: palette)
+                    }
+                } else {
+                    color = cpuPaletteColor(
+                        t: Double(iteration) / Double(maxIterations),
+                        mode: .mandelbrot,
+                        palette: palette
+                    )
+                }
+
+                let offset = (py * width + px) * bytesPerPixel
+                storage.pointer[offset + 0] = UInt8(clamp01(color.r) * 255.0)
+                storage.pointer[offset + 1] = UInt8(clamp01(color.g) * 255.0)
+                storage.pointer[offset + 2] = UInt8(clamp01(color.b) * 255.0)
+                storage.pointer[offset + 3] = 255
+            }
+        }
+
+        bandProgress?.finishBand()
+    }
+
+    guard !Task.isCancelled else { return nil }
+    let pixels = Array(
+        UnsafeBufferPointer(start: storage.pointer, count: storage.byteCount)
+    )
+    return makeCGImage(
+        pixels: pixels,
+        width: width,
+        height: height,
+        bytesPerRow: bytesPerRow,
+        bitsPerComponent: bitsPerComponent,
+        bytesPerPixel: bytesPerPixel
+    )
+}
+
 nonisolated func renderFractal(
     width: Int,
     height: Int,
@@ -3610,6 +3834,7 @@ nonisolated func renderFractal(
     maxIterations: Int,
     viewportAspectRatio: Double? = nil,
     doubleDoubleEnabled: Bool = false,
+    tripleDoubleEnabled: Bool = false,
     progressCallback: (@Sendable (Double) -> Void)? = nil
 ) -> CGImage? {
     
@@ -3620,6 +3845,20 @@ nonisolated func renderFractal(
     var pixels = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
     
     let aspectRatio = viewportAspectRatio ?? (Double(width) / Double(height))
+
+    if tripleDoubleEnabled,
+       mode == .mandelbrot,
+       let preciseViewport {
+        return renderMandelbrotTripleDoubleParallel(
+            width: width,
+            height: height,
+            palette: palette,
+            preciseViewport: preciseViewport,
+            maxIterations: maxIterations,
+            viewportAspectRatio: aspectRatio,
+            progressCallback: progressCallback
+        )
+    }
 
     if doubleDoubleEnabled,
        mode == .mandelbrot,
@@ -5432,7 +5671,7 @@ struct FavoritesSheet: View {
                                     Text(spot.name)
                                         .font(.headline)
 
-                                    Text("\(spot.zoomText) · \(spot.iterations.formatted()) iterations · \(spot.usageCount.formatted()) opens")
+                                    Text("\(spot.zoomText) · \(spot.displayedIterations.formatted()) iterations · \(spot.usageCount.formatted()) opens")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
