@@ -22,6 +22,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
     let centerY: Double
     let scale: Double
     let maxIterations: Int
+    let colorNormalizationIterations: Int? = nil
     let viewportAspectRatio: Double?
     
     func makeCoordinator() -> Coordinator {
@@ -76,6 +77,9 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
         context.coordinator.centerY = Float(centerY)
         context.coordinator.scale = Float(scale)
         context.coordinator.maxIterations = UInt32(maxIterations)
+        context.coordinator.colorNormalizationIterations = colorNormalizationIterations.map {
+            UInt32(clamping: $0)
+        } ?? 0
         context.coordinator.viewportAspectRatio = viewportAspectRatio.map(Float.init)
         
         nsView.setNeedsDisplay(nsView.bounds)
@@ -92,6 +96,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
         var centerY: Float = 0.0
         var scale: Float = 3.0
         var maxIterations: UInt32 = 300
+        var colorNormalizationIterations: UInt32 = 0
         var viewportAspectRatio: Float?
         
         struct Uniforms {
@@ -99,6 +104,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
             var centerY: Float
             var scale: Float
             var maxIterations: UInt32
+            var colorNormalizationIterations: UInt32
             var aspectRatio: Float
             var fractalMode: UInt32
             var fractalPalette: UInt32
@@ -152,6 +158,7 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
                 centerY: centerY,
                 scale: scale,
                 maxIterations: maxIterations,
+                colorNormalizationIterations: colorNormalizationIterations,
                 aspectRatio: aspectRatio,
                 fractalMode: fractalMode,
                 fractalPalette: fractalPalette

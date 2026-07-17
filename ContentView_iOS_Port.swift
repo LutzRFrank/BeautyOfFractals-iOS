@@ -42,7 +42,10 @@ final class WatchFractalMirrorBridge: NSObject, WCSessionDelegate {
 
     private let session = WCSession.default
     private var pendingContext: [String: Any]?
-    private var latestContext: [String: Any]?
+    private var latestMetadata: [String: Any] = [:]
+    private var latestFrameData: Data?
+    private var lastPublishedProgress = -1.0
+    private var lastPublishedRenderingState = false
 
     private override init() {
         super.init()
@@ -56,18 +59,59 @@ final class WatchFractalMirrorBridge: NSObject, WCSessionDelegate {
     }
 
     func publish(image: UIImage, zoomText: String, statusText: String) {
-        guard let jpegData = makeWatchJPEG(from: image) else { return }
+        publishMetadata(zoomText: zoomText, statusText: statusText)
+        guard let jpegData = makeWatchJPEG(from: image) else {
+            print("⌚️ Watch mirror JPEG creation failed")
+            return
+        }
 
-        let context: [String: Any] = [
+        latestFrameData = jpegData
+        let frameContext: [String: Any] = [
             "fractalJPEG": jpegData,
-            "zoomText": zoomText,
-            "statusText": statusText,
             "updatedAt": Date().timeIntervalSince1970
         ]
 
-        latestContext = context
-        pendingContext = context
+        if session.activationState == .activated, session.isReachable {
+            session.sendMessage(frameContext, replyHandler: nil) { error in
+                print("⌚️ Watch mirror live frame failed:", error.localizedDescription)
+            }
+        } else {
+            session.transferUserInfo(frameContext)
+        }
+    }
+
+    func publishMetadata(zoomText: String, statusText: String) {
+        latestMetadata["zoomText"] = zoomText
+        latestMetadata["statusText"] = statusText
+        latestMetadata["updatedAt"] = Date().timeIntervalSince1970
+        pendingContext = latestMetadata
         pushLatestContextIfPossible()
+    }
+
+    func publishProgress(_ progress: Double,
+                         isRendering: Bool,
+                         zoomText: String,
+                         statusText: String) {
+        let clampedProgress = min(max(progress, 0), 1)
+        let stateChanged = isRendering != lastPublishedRenderingState
+        guard stateChanged || abs(clampedProgress - lastPublishedProgress) >= 0.02 else { return }
+
+        lastPublishedProgress = clampedProgress
+        lastPublishedRenderingState = isRendering
+
+        latestMetadata["zoomText"] = zoomText
+        latestMetadata["statusText"] = statusText
+        latestMetadata["renderProgress"] = clampedProgress
+        latestMetadata["isRendering"] = isRendering
+        latestMetadata["updatedAt"] = Date().timeIntervalSince1970
+        pendingContext = latestMetadata
+        pushLatestContextIfPossible()
+
+        if session.activationState == .activated, session.isReachable {
+            session.sendMessage(latestMetadata, replyHandler: nil) { error in
+                print("⌚️ Watch mirror progress failed:", error.localizedDescription)
+            }
+        }
     }
 
     private func pushLatestContextIfPossible() {
@@ -78,34 +122,54 @@ final class WatchFractalMirrorBridge: NSObject, WCSessionDelegate {
             try session.updateApplicationContext(context)
             pendingContext = nil
         } catch {
-            // Keep the newest frame queued. The next activation or render retries it.
+            print("⌚️ Watch mirror context failed:", error.localizedDescription)
+            // Keep the newest metadata queued. The next activation or render retries it.
         }
     }
 
     private func makeWatchJPEG(from image: UIImage) -> Data? {
         let maximumSize = CGSize(width: 216, height: 384)
+        let maximumBytes = 48_000
         let sourceSize = image.size
         guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
 
-        let scale = min(1, min(maximumSize.width / sourceSize.width,
-                               maximumSize.height / sourceSize.height))
-        let targetSize = CGSize(width: max(1, floor(sourceSize.width * scale)),
-                                height: max(1, floor(sourceSize.height * scale)))
+        for sizeScale in [1.0, 0.82, 0.68] {
+            let scale = min(
+                1,
+                min(maximumSize.width * sizeScale / sourceSize.width,
+                    maximumSize.height * sizeScale / sourceSize.height)
+            )
+            let targetSize = CGSize(
+                width: max(1, floor(sourceSize.width * scale)),
+                height: max(1, floor(sourceSize.height * scale))
+            )
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            let thumbnail = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: targetSize))
+            }
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-
-        let thumbnail = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: targetSize))
+            for quality in [0.65, 0.50, 0.38] {
+                if let data = thumbnail.jpegData(compressionQuality: quality),
+                   data.count <= maximumBytes {
+                    return data
+                }
+            }
         }
-
-        return thumbnail.jpegData(compressionQuality: 0.72)
+        return nil
     }
 
     func session(_ session: WCSession,
                  activationDidCompleteWith activationState: WCSessionActivationState,
                  error: Error?) {
+        if let error {
+            print("⌚️ WatchConnectivity activation failed:", error.localizedDescription)
+        } else {
+            print("⌚️ WatchConnectivity activated; paired:", session.isPaired,
+                  "installed:", session.isWatchAppInstalled,
+                  "reachable:", session.isReachable)
+        }
         DispatchQueue.main.async {
             self.pushLatestContextIfPossible()
         }
@@ -125,7 +189,9 @@ final class WatchFractalMirrorBridge: NSObject, WCSessionDelegate {
             return
         }
 
-        replyHandler(latestContext ?? [:])
+        var reply = latestMetadata
+        reply["fractalJPEG"] = latestFrameData
+        replyHandler(reply)
     }
 }
 #endif
@@ -585,11 +651,15 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
     var scaleMid: Double? = nil
     var scaleLo: Double? = nil
     var iterations: Int
+    /// Effective iteration target used by the completed automatic render.
+    /// `iterations` remains the requested slider value so reopening a favorite
+    /// can make a fresh automatic decision for the current device.
+    var renderedIterations: Int? = nil
     var renderQualityRawValue: String? = nil
     var created: Date = Date()
     var updated: Date = Date()
     var deleted: Bool = false
-    var schemaVersion: Int = 4
+    var schemaVersion: Int = 5
     var thumbnailPNG: Data? = nil
     var usageCount: Int = 0
 
@@ -647,6 +717,7 @@ struct FavoriteSpot: Identifiable, Codable, Equatable, Sendable {
     }
 
     var displayedIterations: Int {
+        if let renderedIterations { return renderedIterations }
         guard let storedRenderQuality else { return iterations }
         return effectiveIterationCount(
             baseIterations: iterations,
@@ -709,6 +780,44 @@ final class FavoritesStore: ObservableObject {
 
     init() {
         load()
+    }
+
+    nonisolated private static func readCloudFile(at url: URL) -> FavoriteSpotsCloudFile? {
+        var result: FavoriteSpotsCloudFile?
+        var coordinationError: NSError?
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+
+        coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { coordinatedURL in
+            guard let data = try? Data(contentsOf: coordinatedURL) else { return }
+            result = try? JSONDecoder().decode(FavoriteSpotsCloudFile.self, from: data)
+        }
+
+        return result
+    }
+
+    nonisolated private static func writeCloudFile(
+        _ cloudFile: FavoriteSpotsCloudFile,
+        to url: URL
+    ) throws {
+        let data = try JSONEncoder().encode(cloudFile)
+        var coordinationError: NSError?
+        var writeError: Error?
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+
+        coordinator.coordinate(
+            writingItemAt: url,
+            options: .forReplacing,
+            error: &coordinationError
+        ) { coordinatedURL in
+            do {
+                try data.write(to: coordinatedURL, options: .atomic)
+            } catch {
+                writeError = error
+            }
+        }
+
+        if let coordinationError { throw coordinationError }
+        if let writeError { throw writeError }
     }
 
     func spots(for mode: FractalMode) -> [FavoriteSpot] {
@@ -788,8 +897,7 @@ final class FavoritesStore: ObservableObject {
             let cloudSpots: [FavoriteSpot]
             let cloudReadSucceeded: Bool
 
-            if let data = try? Data(contentsOf: cloudFileURL),
-               let cloudFile = try? JSONDecoder().decode(FavoriteSpotsCloudFile.self, from: data) {
+            if let cloudFile = Self.readCloudFile(at: cloudFileURL) {
                 cloudSpots = cloudFile.favorites
                 cloudReadSucceeded = true
             } else {
@@ -855,9 +963,8 @@ final class FavoritesStore: ObservableObject {
             favorites: spots
         )
 
-        guard let data = try? JSONEncoder().encode(cloudFile) else { return }
         do {
-            try data.write(to: cloudFileURL, options: .atomic)
+            try Self.writeCloudFile(cloudFile, to: cloudFileURL)
             print("☁️ Favorites iCloud wrote", spots.count, "spots to", cloudFileURL.path)
         } catch {
             print("☁️ Favorites iCloud write failed:", error)
@@ -959,6 +1066,7 @@ struct ContentView: View {
     @State private var showFavoritesPanel: Bool = false
     @StateObject private var favoritesStore = FavoritesStore()
     @State private var latestFavoriteThumbnailPNG: Data?
+    @State private var automaticDisplayedIterations: Int?
     @State private var visibleHighPrecisionExportState: HighPrecisionViewportState?
     @State private var visibleHighPrecisionExportImage: PlatformImage?
     @State private var navigationHistory: [ViewportSnapshot] = []
@@ -1179,6 +1287,7 @@ struct ContentView: View {
                 renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
                 renderStatusPanelOffset: $renderStatusPanelOffset,
                 latestFavoriteThumbnailPNG: $latestFavoriteThumbnailPNG,
+                automaticDisplayedIterations: $automaticDisplayedIterations,
                 exportStatusText: exportStatusText,
                 visibleHighPrecisionExportState: $visibleHighPrecisionExportState,
                 visibleHighPrecisionExportImage: $visibleHighPrecisionExportImage
@@ -1250,6 +1359,7 @@ struct ContentView: View {
         ))
         #endif
         .onChange(of: preciseViewport) {
+            automaticDisplayedIterations = nil
             latestFavoriteThumbnailPNG = nil
             visibleHighPrecisionExportState = nil
             visibleHighPrecisionExportImage = nil
@@ -1262,10 +1372,17 @@ struct ContentView: View {
             clearExportStatus()
         }
         .onChange(of: fractalMode) {
+            automaticDisplayedIterations = nil
             latestFavoriteThumbnailPNG = nil
             visibleHighPrecisionExportState = nil
             visibleHighPrecisionExportImage = nil
             clearExportStatus()
+        }
+        .onChange(of: maxIterations) {
+            automaticDisplayedIterations = nil
+        }
+        .onChange(of: renderQuality) {
+            automaticDisplayedIterations = nil
         }
         .task(id: renderStatusPanelTemporaryShowID) {
             guard renderStatusPanelTemporaryShowID > 0 else { return }
@@ -1389,8 +1506,10 @@ The zoom overlay is visible only in the app and is not included in exports.
             scaleMid: preciseViewport.scale.mid,
             scaleLo: preciseViewport.scale.lo,
             iterations: maxIterations,
+            renderedIterations: automaticDisplayedIterations
+                ?? effectiveIterations,
             renderQualityRawValue: renderQuality.rawValue,
-            schemaVersion: 4,
+            schemaVersion: 5,
             thumbnailPNG: latestFavoriteThumbnailPNG ?? makeFavoriteThumbnailPNG(
                 mode: fractalMode,
                 palette: fractalPalette,
@@ -1646,7 +1765,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                 .accessibilityLabel("Undo last zoom or pan")
                 #endif
 
-                Text("\(effectiveIterations.formatted())")
+                Text("\((automaticDisplayedIterations ?? effectiveIterations).formatted())")
                     .font(.system(isCompact ? .caption : .footnote, design: .rounded))
                     .fontWeight(.semibold)
                     .monospacedDigit()
@@ -2088,6 +2207,7 @@ struct MandelbrotView: View {
     @Binding var renderStatusPanelIsRendering: Bool
     @Binding var renderStatusPanelOffset: CGSize
     @Binding var latestFavoriteThumbnailPNG: Data?
+    @Binding var automaticDisplayedIterations: Int?
     let exportStatusText: String?
     @Binding var visibleHighPrecisionExportState: HighPrecisionViewportState?
     @Binding var visibleHighPrecisionExportImage: PlatformImage?
@@ -2255,6 +2375,22 @@ struct MandelbrotView: View {
                             renderStatusPanelManuallyHidden: $renderStatusPanelManuallyHidden,
                             renderStatusPanelIsRendering: $renderStatusPanelIsRendering,
                             renderStatusPanelOffset: $renderStatusPanelOffset,
+                            onAutomaticIterationsSelected: { target in
+                                automaticDisplayedIterations = renderQuality == .deep
+                                    && target > effectiveIterations
+                                    ? target
+                                    : nil
+                            },
+                            onRenderProgress: { progress, isRendering in
+                                #if os(iOS)
+                                WatchFractalMirrorBridge.shared.publishProgress(
+                                    progress,
+                                    isRendering: isRendering,
+                                    zoomText: preciseMagnificationText,
+                                    statusText: precisionStatusText ?? "High Precision"
+                                )
+                                #endif
+                            },
                             onImagePublished: { state, image in
                                 guard state == currentViewportState else { return }
                                 visibleHighPrecisionState = state
@@ -2265,7 +2401,7 @@ struct MandelbrotView: View {
                                 #if os(iOS)
                                 WatchFractalMirrorBridge.shared.publish(
                                     image: image,
-                                    zoomText: magnificationText,
+                                    zoomText: preciseMagnificationText,
                                     statusText: precisionStatusText ?? "High Precision"
                                 )
                                 #endif
@@ -2286,7 +2422,7 @@ struct MandelbrotView: View {
                         scale: scale,
                         maxIterations: effectiveIterations,
                         viewportAspectRatio: viewportAspectRatio,
-                        zoomText: magnificationText,
+                        zoomText: preciseMagnificationText,
                         statusText: watchPreviewStatusText,
                         interactionActive: isInteractionPreviewActive,
                         renderKey: watchPreviewRenderKey
@@ -2601,6 +2737,11 @@ private struct WatchMirrorPreviewPublisher: View {
 
     @MainActor
     private func publishPreview() async {
+        WatchFractalMirrorBridge.shared.publishMetadata(
+            zoomText: zoomText,
+            statusText: statusText
+        )
+
         // 3D modes have their own ray-marcher. Mirror v2 keeps them on their
         // last received frame rather than competing with the live 3D renderer.
         guard !interactionActive,
@@ -2970,6 +3111,8 @@ struct HighPrecisionFractalPreview: View {
     @Binding var renderStatusPanelManuallyHidden: Bool
     @Binding var renderStatusPanelIsRendering: Bool
     @Binding var renderStatusPanelOffset: CGSize
+    let onAutomaticIterationsSelected: (Int) -> Void
+    let onRenderProgress: (Double, Bool) -> Void
     let onImagePublished: (HighPrecisionViewportState, PlatformImage) -> Void
 
     @State private var image: PlatformImage?
@@ -2977,6 +3120,7 @@ struct HighPrecisionFractalPreview: View {
     @State private var renderStatusDragStartOffset: CGSize?
     @State private var renderProgress: Double = 0.0
     @State private var completedRenderIterations: Int?
+    @State private var activeRenderIterations: Int?
     @State private var renderStartDate: Date?
     @State private var lastRenderDurationText: String?
 
@@ -2999,12 +3143,13 @@ struct HighPrecisionFractalPreview: View {
     }
 
     private var renderIterationText: String {
+        let target = activeRenderIterations ?? maxIterations
         if !isRendering, let completedRenderIterations {
-            return "\(completedRenderIterations.formatted()) / \(maxIterations.formatted())"
+            return "\(completedRenderIterations.formatted()) / \(target.formatted())"
         }
 
-        let current = Int(Double(maxIterations) * clampedRenderProgress)
-        return "\(current.formatted()) / \(maxIterations.formatted())"
+        let current = Int(Double(target) * clampedRenderProgress)
+        return "\(current.formatted()) / \(target.formatted())"
     }
 
     private var renderIterationCaption: String {
@@ -3195,9 +3340,14 @@ struct HighPrecisionFractalPreview: View {
         }
         .onChange(of: isRendering) {
             renderStatusPanelIsRendering = isRendering
+            onRenderProgress(clampedRenderProgress, isRendering)
+        }
+        .onChange(of: renderProgress) {
+            onRenderProgress(clampedRenderProgress, isRendering)
         }
         .onDisappear {
             renderStatusPanelIsRendering = false
+            onRenderProgress(clampedRenderProgress, false)
         }
         .task(id: renderID) { await renderPreview() }
     }
@@ -3212,6 +3362,7 @@ struct HighPrecisionFractalPreview: View {
         }
         renderProgress = 0.01
         completedRenderIterations = nil
+        activeRenderIterations = nil
         renderStartDate = Date()
         lastRenderDurationText = nil
         renderStatusPanelManuallyHidden = false
@@ -3346,7 +3497,12 @@ struct HighPrecisionFractalPreview: View {
             : normalFinalSize
         renderProgress = max(renderProgress, 0.82)
 
-        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, preciseViewport: requestPreciseViewport, maxIterations: finalRenderIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995, doubleDoubleEnabled: usesDoubleDoubleFinalRender, tripleDoubleEnabled: usesTripleDoubleFinalRender) {
+        activeRenderIterations = finalRenderIterations
+        if let image = await renderImage(width: size.width, height: size.height, mode: mode, palette: palette, centerX: cx, centerY: cy, scale: currentScale, preciseViewport: requestPreciseViewport, maxIterations: finalRenderIterations, requestID: requestID, progressStart: 0.82, progressEnd: 0.995, doubleDoubleEnabled: usesDoubleDoubleFinalRender, tripleDoubleEnabled: usesTripleDoubleFinalRender, automaticIterationsEnabled: usesTripleDoubleFinalRender, iterationTargetCallback: { target in
+            activeRenderIterations = target
+            onAutomaticIterationsSelected(target)
+        }) {
+            let renderedIterations = activeRenderIterations ?? finalRenderIterations
             let platformImage = makePlatformImage(image, width: size.width, height: size.height)
             self.image = platformImage
             onImagePublished(
@@ -3362,7 +3518,7 @@ struct HighPrecisionFractalPreview: View {
                 platformImage
             )
 
-            completedRenderIterations = finalRenderIterations
+            completedRenderIterations = renderedIterations
             renderProgress = 1.0
             do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { }
         }
@@ -3379,7 +3535,7 @@ struct HighPrecisionFractalPreview: View {
         #endif
     }
 
-    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, preciseViewport: PreciseViewport? = nil, maxIterations: Int, requestID: String, progressStart: Double? = nil, progressEnd: Double? = nil, doubleDoubleEnabled: Bool = false, tripleDoubleEnabled: Bool = false) async -> CGImage? {
+    @MainActor private func renderImage(width: Int, height: Int, mode: FractalMode, palette: FractalPalette, centerX: Double, centerY: Double, scale: Double, preciseViewport: PreciseViewport? = nil, maxIterations: Int, requestID: String, progressStart: Double? = nil, progressEnd: Double? = nil, doubleDoubleEnabled: Bool = false, tripleDoubleEnabled: Bool = false, automaticIterationsEnabled: Bool = false, iterationTargetCallback: (@MainActor @Sendable (Int) -> Void)? = nil) async -> CGImage? {
         let aspect = viewportAspectRatio
         let worker = Task.detached(priority: .userInitiated) {
             renderFractal(
@@ -3395,6 +3551,13 @@ struct HighPrecisionFractalPreview: View {
                 viewportAspectRatio: aspect,
                 doubleDoubleEnabled: doubleDoubleEnabled,
                 tripleDoubleEnabled: tripleDoubleEnabled,
+                automaticIterationsEnabled: automaticIterationsEnabled,
+                iterationTargetCallback: { target in
+                    Task { @MainActor in
+                        guard requestID == renderID else { return }
+                        iterationTargetCallback?(target)
+                    }
+                },
                 progressCallback: { progress in
                     guard let progressStart, let progressEnd else { return }
                     Task { @MainActor in
@@ -3726,6 +3889,8 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
     preciseViewport: PreciseViewport,
     maxIterations: Int,
     viewportAspectRatio: Double,
+    automaticIterationsEnabled: Bool = false,
+    iterationTargetCallback: (@Sendable (Int) -> Void)? = nil,
     progressCallback: (@Sendable (Double) -> Void)? = nil
 ) -> CGImage? {
     let bytesPerPixel = 4
@@ -3735,12 +3900,63 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
     let storage = DirectRenderPixelStorage(byteCount: byteCount)
 
     let tripleViewport = TripleDoubleViewport(preciseViewport)
-    let references = TripleDoublePerturbation.makeReferenceGrid(
-        viewport: tripleViewport,
-        aspectRatio: viewportAspectRatio,
-        maxIterations: maxIterations
-    )
     let projectedScale = tripleViewport.scale.doubleValue
+    let usesGuardedReference = abs(projectedScale) < 1e-42
+    let referenceIterationBudget = usesGuardedReference && automaticIterationsEnabled
+        ? 250_000
+        : maxIterations
+    let centralGuardedReference = usesGuardedReference
+        ? TripleDoublePerturbation.makeGuardedCentralReference(
+            viewport: tripleViewport,
+            maxIterations: referenceIterationBudget
+        )
+        : nil
+    let preliminaryReferences = centralGuardedReference.map { [$0] }
+        ?? TripleDoublePerturbation.makeReferenceGrid(
+            viewport: tripleViewport,
+            aspectRatio: viewportAspectRatio,
+            maxIterations: maxIterations
+        )
+    let centralReference = preliminaryReferences.first(where: {
+        $0.horizontalOffset == 0.0 && $0.verticalOffset == 0.0
+    })
+    let centerEscapeIteration = centralReference?.orbit.escapedAt
+        ?? referenceIterationBudget
+    let automaticTarget: Int
+    if usesGuardedReference,
+       automaticIterationsEnabled,
+       centerEscapeIteration < referenceIterationBudget {
+        let withReserve = Int(
+            ceil(Double(centerEscapeIteration) * 1.15 / 1_000.0)
+        ) * 1_000
+        automaticTarget = min(
+            referenceIterationBudget,
+            max(maxIterations, withReserve)
+        )
+    } else if usesGuardedReference, automaticIterationsEnabled {
+        automaticTarget = referenceIterationBudget
+    } else {
+        automaticTarget = maxIterations
+    }
+    let references = usesGuardedReference
+        ? preliminaryReferences
+            + TripleDoublePerturbation.makeGuardedSatelliteReferences(
+                viewport: tripleViewport,
+                aspectRatio: viewportAspectRatio,
+                maxIterations: automaticTarget
+            )
+        : preliminaryReferences
+    iterationTargetCallback?(automaticTarget)
+    let seriesApproximations = usesGuardedReference
+        ? []
+        : centralReference.map {
+            TripleDoublePerturbation.makeSeriesApproximations(
+                scale: projectedScale,
+                aspectRatio: viewportAspectRatio,
+                reference: $0.orbit,
+                maxIterations: automaticTarget
+            )
+        } ?? []
     let processorCount = max(1, ProcessInfo.processInfo.activeProcessorCount)
     let bandCount = min(height, max(2, processorCount * 8))
     let rowsPerBand = (height + bandCount - 1) / bandCount
@@ -3764,18 +3980,19 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
                 let horizontalOffset =
                     ((Double(px) + 0.5) / pixelWidth - 0.5)
                     * viewportAspectRatio
-                let iteration = TripleDoublePerturbation.iterationWithLocalRebase(
+                let iteration = TripleDoublePerturbation.acceleratedIterationWithLocalRebase(
                     horizontalOffset: horizontalOffset,
                     verticalOffset: verticalOffset,
                     scale: projectedScale,
                     references: references,
-                    maxIterations: maxIterations
-                )
+                    approximations: seriesApproximations,
+                    maxIterations: automaticTarget
+                ).iteration
                 let normalizedX = (Double(px) + 0.5) / pixelWidth
                 let normalizedY = (Double(py) + 0.5) / pixelHeight
                 let color: (r: Double, g: Double, b: Double)
 
-                if iteration == maxIterations {
+                if iteration == automaticTarget {
                     if palette == .motherOfPearl {
                         color = motherOfPearlInteriorColor(
                             normalizedX: normalizedX,
@@ -3796,7 +4013,7 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
                     }
                 } else {
                     color = cpuPaletteColor(
-                        t: Double(iteration) / Double(maxIterations),
+                        t: Double(iteration) / Double(automaticTarget),
                         mode: .mandelbrot,
                         palette: palette
                     )
@@ -3840,6 +4057,8 @@ nonisolated func renderFractal(
     viewportAspectRatio: Double? = nil,
     doubleDoubleEnabled: Bool = false,
     tripleDoubleEnabled: Bool = false,
+    automaticIterationsEnabled: Bool = false,
+    iterationTargetCallback: (@Sendable (Int) -> Void)? = nil,
     progressCallback: (@Sendable (Double) -> Void)? = nil
 ) -> CGImage? {
     
@@ -3861,6 +4080,8 @@ nonisolated func renderFractal(
             preciseViewport: preciseViewport,
             maxIterations: maxIterations,
             viewportAspectRatio: aspectRatio,
+            automaticIterationsEnabled: automaticIterationsEnabled,
+            iterationTargetCallback: iterationTargetCallback,
             progressCallback: progressCallback
         )
     }
@@ -5601,16 +5822,38 @@ struct FavoritesSheet: View {
             }
         case .iterations:
             return spots.sorted {
-                if $0.iterations == $1.iterations {
+                if $0.displayedIterations == $1.displayedIterations {
                     return $0.created > $1.created
                 }
-                return $0.iterations > $1.iterations
+                return $0.displayedIterations > $1.displayedIterations
             }
         }
     }
 
     private func spotsZoomValue(_ spot: FavoriteSpot) -> Double {
         spot.preciseZoomValue ?? spot.mode.defaultScale / max(spot.scale, 1e-18)
+    }
+
+    private func synchronizeFavorites(showProgress: Bool) {
+        if showProgress {
+            isSyncingFavorites = true
+        }
+
+        _ = favoritesStore.syncWithCloud()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            _ = favoritesStore.syncWithCloud()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            _ = favoritesStore.syncWithCloud()
+        }
+
+        if showProgress {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+                isSyncingFavorites = false
+            }
+        }
     }
 
     var body: some View {
@@ -5624,16 +5867,7 @@ struct FavoritesSheet: View {
                     }
 
                     Button {
-                        isSyncingFavorites = true
-                        _ = favoritesStore.syncWithCloud()
-
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-                            _ = favoritesStore.syncWithCloud()
-                        }
-
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-                            isSyncingFavorites = false
-                        }
+                        synchronizeFavorites(showProgress: true)
                     } label: {
                         Label(isSyncingFavorites ? "Syncing…" : "Sync with iCloud",
                               systemImage: isSyncingFavorites ? "icloud" : "icloud.and.arrow.down")
@@ -5703,6 +5937,9 @@ struct FavoritesSheet: View {
                 }
             }
             .navigationTitle("Favorite Spots")
+            .task {
+                synchronizeFavorites(showProgress: false)
+            }
             .alert("Rename Favorite", isPresented: Binding(
                 get: { spotToRename != nil },
                 set: { if !$0 { spotToRename = nil } }

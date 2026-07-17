@@ -15,6 +15,12 @@ struct MandelbrotExplorerApp: App {
     #if os(macOS)
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     #endif
+
+    init() {
+        #if os(iOS)
+        WatchFractalMirrorBridge.shared.activate()
+        #endif
+    }
     
     var body: some Scene {
         WindowGroup {
