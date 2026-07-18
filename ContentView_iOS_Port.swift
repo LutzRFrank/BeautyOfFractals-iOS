@@ -3903,7 +3903,7 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
     let projectedScale = tripleViewport.scale.doubleValue
     let usesGuardedReference = abs(projectedScale) < 1e-42
     let referenceIterationBudget = usesGuardedReference && automaticIterationsEnabled
-        ? 250_000
+        ? 500_000
         : maxIterations
     let centralGuardedReference = usesGuardedReference
         ? TripleDoublePerturbation.makeGuardedCentralReference(
