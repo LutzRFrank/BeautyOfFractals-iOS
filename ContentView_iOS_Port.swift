@@ -2178,6 +2178,10 @@ The zoom overlay is visible only in the app and is not included in exports.
     }
 }
 
+#Preview {
+    ContentView()
+}
+
 struct HighPrecisionViewportState: Equatable {
     let modeRawValue: Int
     let paletteRawValue: Int
