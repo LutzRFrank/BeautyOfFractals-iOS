@@ -219,6 +219,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
     case power11 = 19
     case power12 = 20
     case power2 = 21
+    case mandelbrotPlateau = 22
 
     nonisolated var powerExponent: Int? {
         switch self {
@@ -262,6 +263,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Mandelbulb 3D"
         case .mandelbrotRelief:
             return "Mandelbrot Relief"
+        case .mandelbrotPlateau:
+            return "Mandelbrot Plateau"
         case .mandelbox3D:
             return "Mandelbox 3D"
         case .newton:
@@ -291,6 +294,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Mandelbulb"
         case .mandelbrotRelief:
             return "Relief"
+        case .mandelbrotPlateau:
+            return "Plateau"
         case .mandelbox3D:
             return "Mandelbox"
         case .newton:
@@ -320,6 +325,8 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return "Mandelbulb3D"
         case .mandelbrotRelief:
             return "MandelbrotRelief"
+        case .mandelbrotPlateau:
+            return "MandelbrotPlateau"
         case .mandelbox3D:
             return "Mandelbox3D"
         case .newton:
@@ -347,7 +354,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return 0.0
         case .mandelbulb3D:
             return 0.0
-        case .mandelbrotRelief:
+        case .mandelbrotRelief, .mandelbrotPlateau:
             return -0.5
         case .mandelbox3D:
             return 0.0
@@ -376,7 +383,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return 0.0
         case .mandelbulb3D:
             return 0.0
-        case .mandelbrotRelief:
+        case .mandelbrotRelief, .mandelbrotPlateau:
             return 0.0
         case .mandelbox3D:
             return 0.0
@@ -405,7 +412,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
             return 3.0
         case .mandelbulb3D:
             return 2.8
-        case .mandelbrotRelief:
+        case .mandelbrotRelief, .mandelbrotPlateau:
             return 3.0
         case .mandelbox3D:
             return 2.8
@@ -422,7 +429,7 @@ enum FractalMode: Int, CaseIterable, Identifiable {
     
     var supportsHighPrecisionPreview: Bool {
         switch self {
-        case .mandelbrot, .mandelbrotRelief, .julia, .burningShip, .tricorn, .kleinian, .newton, .eightRainbows, .celtic, .power2, .power3, .power4, .power5, .power6, .power7, .power8, .power9, .power10, .power11, .power12:
+        case .mandelbrot, .mandelbrotRelief, .mandelbrotPlateau, .julia, .burningShip, .tricorn, .kleinian, .newton, .eightRainbows, .celtic, .power2, .power3, .power4, .power5, .power6, .power7, .power8, .power9, .power10, .power11, .power12:
             return true
         case .mandelbulb3D, .mandelbox3D:
             return false
@@ -1053,6 +1060,7 @@ struct ContentView: View {
     )
     
     @State private var maxIterations: Int = 300
+    @State private var plateauTiltDegrees: Double = 82.0
     @State private var isSavingSnapshot: Bool = false
     @State private var exportStartDate: Date?
     @State private var exportStatusText: String?
@@ -1277,6 +1285,7 @@ struct ContentView: View {
                 scale: $scale,
                 preciseViewport: $preciseViewport,
                 maxIterations: $maxIterations,
+                plateauTiltDegrees: plateauTiltDegrees,
                 renderQuality: renderQuality,
                 navigationStarted: recordNavigationStep,
                 clearExportStatus: clearExportStatus,
@@ -1563,6 +1572,7 @@ The zoom overlay is visible only in the app and is not included in exports.
                         modeMenuButton(.tricorn)
                         modeMenuButton(.kleinian)
                         modeMenuButton(.mandelbrotRelief)
+                        modeMenuButton(.mandelbrotPlateau)
 
                         Divider()
 
@@ -1751,6 +1761,19 @@ The zoom overlay is visible only in the app and is not included in exports.
             }
             
             HStack(spacing: isCompact ? 6 : 8) {
+                if fractalMode == .mandelbrotPlateau {
+                    Text("Tilt \(Int(plateauTiltDegrees.rounded()))°")
+                        .font(.system(isCompact ? .caption2 : .caption, design: .rounded))
+                        .monospacedDigit()
+
+                    Slider(
+                        value: $plateauTiltDegrees,
+                        in: 80...90,
+                        step: 1
+                    )
+                    .frame(minWidth: 70, maxWidth: 150)
+                }
+
                 #if os(iOS)
                 Button {
                     undoView()
@@ -1874,6 +1897,8 @@ The zoom overlay is visible only in the app and is not included in exports.
             fractalPalette = .solarPop
         case .mandelbrot, .tricorn, .celtic:
             fractalPalette = .deepBlue
+        case .mandelbrotPlateau:
+            fractalPalette = .auric
         case .eightRainbows:
             fractalPalette = .rainbows
         default:
@@ -2201,6 +2226,7 @@ struct MandelbrotView: View {
     @Binding var scale: Double
     @Binding var preciseViewport: PreciseViewport
     @Binding var maxIterations: Int
+    let plateauTiltDegrees: Double
     let renderQuality: RenderQuality
     let navigationStarted: () -> Void
     let clearExportStatus: () -> Void
@@ -2349,6 +2375,7 @@ struct MandelbrotView: View {
                         centerY: centerY,
                         scale: scale,
                         maxIterations: metalDisplayedIterations,
+                        plateauTiltDegrees: plateauTiltDegrees,
                         viewportAspectRatio: viewportAspectRatio
                     )
 
@@ -2606,6 +2633,53 @@ struct MandelbrotView: View {
     }
     private func makeRect(from start: CGPoint, to end: CGPoint) -> CGRect { CGRect(x: min(start.x,end.x), y: min(start.y,end.y), width: abs(end.x-start.x), height: abs(end.y-start.y)) }
 
+    private var plateauVerticalProjection: Double {
+        guard fractalMode == .mandelbrotPlateau else { return 1.0 }
+        let degrees = min(max(plateauTiltDegrees, 80.0), 90.0)
+        return sin(degrees * .pi / 180.0)
+    }
+
+    private var plateauTopLift: Double {
+        guard fractalMode == .mandelbrotPlateau else { return 0.0 }
+        let degrees = min(max(plateauTiltDegrees, 80.0), 90.0)
+        return 0.30 * cos(degrees * .pi / 180.0)
+    }
+
+    private func displayedVerticalFraction(_ fraction: Double) -> Double {
+        0.5
+            - (fraction - 0.5) / plateauVerticalProjection
+            + plateauTopLift
+    }
+
+    private func viewportZoomedToDisplayedSelection(
+        horizontalFraction: Double,
+        verticalFraction: Double,
+        aspectRatio: Double,
+        zoomFactor: Double
+    ) -> PreciseViewport {
+        guard fractalMode == .mandelbrotPlateau else {
+            return preciseViewport.zoomed(
+                toHorizontalFraction: horizontalFraction,
+                verticalFraction: verticalFraction,
+                aspectRatio: aspectRatio,
+                zoomFactor: zoomFactor
+            )
+        }
+
+        let sourcePoint = preciseViewport.complexPoint(
+            horizontalFraction: horizontalFraction,
+            verticalFraction: displayedVerticalFraction(verticalFraction),
+            aspectRatio: aspectRatio
+        )
+        let newScale = preciseViewport.scale * zoomFactor
+
+        return PreciseViewport(
+            centerX: sourcePoint.x,
+            centerY: sourcePoint.y - newScale * plateauTopLift,
+            scale: newScale
+        )
+    }
+
     private func panView(from start: CGPoint, to current: CGPoint, viewSize: CGSize) {
         guard let startViewport = panStartPreciseViewport else { return }
 
@@ -2615,7 +2689,10 @@ struct MandelbrotView: View {
         applyPreciseViewport(
             startViewport.panned(
                 horizontalFraction: Double(current.x - start.x) / width,
-                verticalFraction: Double(current.y - start.y) / height,
+                verticalFraction: Double(current.y - start.y)
+                    / height
+                    / plateauVerticalProjection
+                    * (fractalMode == .mandelbrotPlateau ? -1.0 : 1.0),
                 aspectRatio: width / height
             )
         )
@@ -2629,7 +2706,10 @@ struct MandelbrotView: View {
         applyPreciseViewport(
             preciseViewport.panned(
                 horizontalFraction: Double(delta.width) / width,
-                verticalFraction: Double(delta.height) / height,
+                verticalFraction: Double(delta.height)
+                    / height
+                    / plateauVerticalProjection
+                    * (fractalMode == .mandelbrotPlateau ? -1.0 : 1.0),
                 aspectRatio: width / height
             )
         )
@@ -2640,12 +2720,12 @@ struct MandelbrotView: View {
         let height = max(Double(viewSize.height), 1.0)
         let factor = max(
             Double(rect.width) / width,
-            Double(rect.height) / height
+            Double(rect.height) / height / plateauVerticalProjection
         )
 
         applyPreciseViewport(
-            preciseViewport.zoomed(
-                toHorizontalFraction: Double(rect.midX) / width,
+            viewportZoomedToDisplayedSelection(
+                horizontalFraction: Double(rect.midX) / width,
                 verticalFraction: Double(rect.midY) / height,
                 aspectRatio: width / height,
                 zoomFactor: factor
@@ -2682,7 +2762,9 @@ struct MandelbrotView: View {
         let height = max(Double(viewSize.height), 1.0)
         let aspectRatio = width / height
         let horizontalFraction = Double(location.x) / width
-        let verticalFraction = Double(location.y) / height
+        let verticalFraction = displayedVerticalFraction(
+            Double(location.y) / height
+        )
 
         let point = preciseViewport.complexPoint(
             horizontalFraction: horizontalFraction,
@@ -4750,7 +4832,7 @@ nonisolated private func calculateFractalIteration(
     var cy: Double
     
     switch mode {
-    case .mandelbrot, .mandelbrotRelief, .celtic, .eightRainbows, .power2, .power3, .power4, .power5, .power6, .power7, .power8, .power9, .power10, .power11, .power12:
+    case .mandelbrot, .mandelbrotRelief, .mandelbrotPlateau, .celtic, .eightRainbows, .power2, .power3, .power4, .power5, .power6, .power7, .power8, .power9, .power10, .power11, .power12:
         x = 0.0
         y = 0.0
         cx = x0
@@ -4791,7 +4873,7 @@ nonisolated private func calculateFractalIteration(
     
     while x * x + y * y <= 4.0 && iteration < maxIterations {
         switch mode {
-        case .mandelbrot, .julia, .mandelbulb3D, .mandelbrotRelief, .mandelbox3D, .newton:
+        case .mandelbrot, .julia, .mandelbulb3D, .mandelbrotRelief, .mandelbrotPlateau, .mandelbox3D, .newton:
             let xtemp = x * x - y * y + cx
             y = 2.0 * x * y + cy
             x = xtemp
