@@ -998,6 +998,7 @@ private func makeFavoriteThumbnailPNG(
     centerY: Double,
     scale: Double,
     iterations: Int,
+    plateauTiltDegrees: Double = 82.0,
     viewportAspectRatio: Double = 16.0 / 10.0
 ) -> Data? {
     guard let image = renderFractal(
@@ -1009,6 +1010,7 @@ private func makeFavoriteThumbnailPNG(
         centerY: centerY,
         scale: scale,
         maxIterations: max(300, min(iterations, 3_000)),
+        plateauTiltDegrees: plateauTiltDegrees,
         viewportAspectRatio: viewportAspectRatio
     ) else {
         return nil
@@ -1525,7 +1527,8 @@ The zoom overlay is visible only in the app and is not included in exports.
                 centerX: centerX,
                 centerY: centerY,
                 scale: scale,
-                iterations: effectiveIterations
+                iterations: effectiveIterations,
+                plateauTiltDegrees: plateauTiltDegrees
             )
         )
         
@@ -2389,6 +2392,7 @@ struct MandelbrotView: View {
                             scale: state.scale,
                             preciseViewport: state.preciseViewport,
                             maxIterations: state.iterations,
+                            plateauTiltDegrees: plateauTiltDegrees,
                             viewSize: geometry.size,
                             viewportAspectRatio: viewportAspectRatio,
                             progressiveCPUPreview: useDeepCPUPreview,
@@ -2452,6 +2456,7 @@ struct MandelbrotView: View {
                         centerY: centerY,
                         scale: scale,
                         maxIterations: effectiveIterations,
+                        plateauTiltDegrees: plateauTiltDegrees,
                         viewportAspectRatio: viewportAspectRatio,
                         zoomText: preciseMagnificationText,
                         statusText: watchPreviewStatusText,
@@ -2808,6 +2813,7 @@ private struct WatchMirrorPreviewPublisher: View {
     let centerY: Double
     let scale: Double
     let maxIterations: Int
+    let plateauTiltDegrees: Double
     let viewportAspectRatio: Double
     let zoomText: String
     let statusText: String
@@ -2873,6 +2879,7 @@ private struct WatchMirrorPreviewPublisher: View {
                 centerY: cy,
                 scale: currentScale,
                 maxIterations: previewIterations,
+                plateauTiltDegrees: plateauTiltDegrees,
                 viewportAspectRatio: aspect
             )
         }
@@ -3183,6 +3190,7 @@ struct HighPrecisionFractalPreview: View {
     let scale: Double
     let preciseViewport: PreciseViewport
     let maxIterations: Int
+    let plateauTiltDegrees: Double
     let viewSize: CGSize
     let viewportAspectRatio: Double
     let progressiveCPUPreview: Bool
@@ -3216,7 +3224,8 @@ struct HighPrecisionFractalPreview: View {
          String(format: "%.18e", preciseViewport.centerX.hi), String(format: "%.18e", preciseViewport.centerX.lo),
          String(format: "%.18e", preciseViewport.centerY.hi), String(format: "%.18e", preciseViewport.centerY.lo),
          String(format: "%.18e", preciseViewport.scale.hi), String(format: "%.18e", preciseViewport.scale.lo),
-         maxIterations.description, Int(viewSize.width).description, Int(viewSize.height).description,
+         maxIterations.description, String(format: "%.1f", plateauTiltDegrees),
+         Int(viewSize.width).description, Int(viewSize.height).description,
          progressiveCPUPreview.description, refinementEnabled.description, renderEpoch.description].joined(separator: "|")
     }
 
@@ -3634,6 +3643,7 @@ struct HighPrecisionFractalPreview: View {
                 scale: scale,
                 preciseViewport: preciseViewport,
                 maxIterations: maxIterations,
+                plateauTiltDegrees: plateauTiltDegrees,
                 viewportAspectRatio: aspect,
                 doubleDoubleEnabled: doubleDoubleEnabled,
                 tripleDoubleEnabled: tripleDoubleEnabled,
@@ -4140,6 +4150,7 @@ nonisolated func renderFractal(
     scale: Double,
     preciseViewport: PreciseViewport? = nil,
     maxIterations: Int,
+    plateauTiltDegrees: Double = 82.0,
     viewportAspectRatio: Double? = nil,
     doubleDoubleEnabled: Bool = false,
     tripleDoubleEnabled: Bool = false,
@@ -4195,7 +4206,17 @@ nonisolated func renderFractal(
         for px in 0..<width {
             if px.isMultiple(of: 64), Task.isCancelled { return nil }
             let x0 = centerX + ((Double(px) + 0.5) / Double(width) - 0.5) * scale * aspectRatio
-            let y0 = centerY + ((Double(py) + 0.5) / Double(height) - 0.5) * scale
+            let verticalFraction =
+                (Double(py) + 0.5) / Double(height) - 0.5
+            let y0: Double
+            if mode == .mandelbrotPlateau {
+                let tiltRadians =
+                    min(max(plateauTiltDegrees, 80.0), 90.0) * .pi / 180.0
+                let verticalProjection = sin(tiltRadians)
+                y0 = centerY - verticalFraction * scale / verticalProjection
+            } else {
+                y0 = centerY + verticalFraction * scale
+            }
             
             let color: (r: Double, g: Double, b: Double)
             
@@ -4230,7 +4251,48 @@ nonisolated func renderFractal(
                     )
                 }
                 
-                if iteration == localMaxIterations {
+                if mode == .mandelbrotPlateau {
+                    let tiltRadians =
+                        min(max(plateauTiltDegrees, 80.0), 90.0) * .pi / 180.0
+                    let lift = 0.30 * cos(tiltRadians)
+                    let topIteration = calculateFractalIteration(
+                        mode: .mandelbrot,
+                        x0: x0,
+                        y0: y0 + scale * lift,
+                        maxIterations: localMaxIterations
+                    )
+                    let middleHit = (1...2).contains { middleStep in
+                        calculateFractalIteration(
+                            mode: .mandelbrot,
+                            x0: x0,
+                            y0: y0 + scale * lift * Double(middleStep) / 3.0,
+                            maxIterations: localMaxIterations
+                        ) == localMaxIterations
+                    }
+
+                    if topIteration == localMaxIterations {
+                        color = auricInteriorColor(
+                            normalizedX: (Double(px) + 0.5) / Double(width),
+                            normalizedY:
+                                (Double(py) + 0.5) / Double(height) - lift
+                        )
+                    } else if iteration == localMaxIterations || middleHit {
+                        let wallLight = 0.72
+                            + 0.22 * (Double(px) + 0.5) / Double(width)
+                        color = (
+                            r: 0.58 * wallLight,
+                            g: 0.31 * wallLight,
+                            b: 0.065 * wallLight
+                        )
+                    } else {
+                        let t = Double(iteration) / Double(localMaxIterations)
+                        color = cpuPaletteColor(
+                            t: t,
+                            mode: .mandelbrot,
+                            palette: .auric
+                        )
+                    }
+                } else if iteration == localMaxIterations {
                     if palette == .motherOfPearl,
                        mode == .mandelbrot || mode == .mandelbrotRelief || mode.powerExponent != nil {
                         color = motherOfPearlInteriorColor(normalizedX: (Double(px) + 0.5) / Double(width), normalizedY: (Double(py) + 0.5) / Double(height))
