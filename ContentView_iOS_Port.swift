@@ -1417,7 +1417,7 @@ struct ContentView: View {
         #if os(iOS)
         .sheet(isPresented: $showHelp) {
             HelpSheet()
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showExportPicker) {
@@ -5801,112 +5801,45 @@ private struct ExportPickerSheet: View {
 
 private struct HelpSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var isAtBottom = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var currentArtwork = 0
+
+    private let artworkNames = [
+        "WelcomeFractalAuric",
+        "WelcomeFractalDeepZoom",
+        "WelcomeFractalCopperBlue",
+        "WelcomeFractalOcean"
+    ]
+    private let artworkTimer = Timer.publish(every: 5.2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
-            GeometryReader { viewport in
-                ScrollView(showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 22) {
-                        HelpSection(
-                            title: "Modes",
-                            content: """
-Explore Mandelbrot, Power of 4, Celtic Mandelbrot, Julia, Eight Rainbows, Burning Ship, Tricorn, Kleinian Relief, Mandelbrot Relief, Mandelbulb 3D, Mandelbox 3D and Newton Fractal.
-"""
-                        )
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.025, green: 0.045, blue: 0.11),
+                        Color(red: 0.04, green: 0.08, blue: 0.19),
+                        Color(red: 0.055, green: 0.035, blue: 0.14)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
 
-                        HelpSection(
-                            title: "Palettes",
-                            content: """
-Available palettes depend on the selected mode.
-
-Julia supports Solar Pop and Rainbows. Eight Rainbows starts with the Rainbows palette.
-Auric adds metallic gold with medallion-like Mandelbrot interiors, ornamental Julia spirals and polished Relief highlights.
-"""
-                        )
-
-                        HelpSection(
-                            title: "Quality and precision",
-                            content: """
-Fast, High and Deep adjust the effective iteration budget shown in the controls.
-
-Deep 2D locations use High Precision automatically. At extreme zoom levels, CPU Deep Zoom progressively refines the image.
-"""
-                        )
-
-                        HelpSection(
-                            title: "Navigation",
-                            content: """
-Drag to select an area and zoom in.
-Use two fingers to move the view.
-Pinch to zoom. Double-tap to zoom at that position.
-"""
-                        )
-
-                        HelpSection(
-                            title: "Controls",
-                            content: """
-On iPhone, controls collapse after a short pause. Tap or pull up the handle to show them again.
-"""
-                        )
-
-                        HelpSection(
-                            title: "Favorites",
-                            content: """
-Use the star button to open Favorite Spots.
-
-A saved spot preserves its mode, palette, location, zoom, base iteration setting and thumbnail. Tap a spot to load it. Swipe left to delete it.
-"""
-                        )
-
-                        HelpSection(
-                            title: "Export",
-                            content: """
-On iPhone, exports are optimized for mobile rendering time.
-
-Fast Export uses 1440 × 900. Quality Export uses 1920 × 1200. Ultra Mobile renders 1440 × 900 internally at 2× and downsamples for cleaner detail.
-
-iPad supports the larger export sizes. The zoom overlay is visible only in the app and is not included in exports.
-
-3D exports are CPU raymarched and may take longer.
-"""
-                        )
+                ScrollView {
+                    VStack(spacing: 18) {
+                        welcomeHero
+                        featureSection
+                        quickStart
                     }
-                    .padding(20)
-                    .padding(.bottom, 44)
-                    .background {
-                        GeometryReader { content in
-                            Color.clear.preference(
-                                key: HelpScrollBottomPreferenceKey.self,
-                                value: content.frame(in: .named("helpScroll")).maxY
-                            )
-                        }
-                    }
-                }
-                .coordinateSpace(name: "helpScroll")
-                .overlay(alignment: .bottom) {
-                    if !isAtBottom {
-                        Label("More below", systemImage: "chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(.regularMaterial, in: Capsule())
-                            .padding(.bottom, 10)
-                            .allowsHitTesting(false)
-                            .transition(.opacity.combined(with: .scale(scale: 0.94)))
-                    }
-                }
-                .onPreferenceChange(HelpScrollBottomPreferenceKey.self) { contentBottom in
-                    let reachesBottom = contentBottom <= viewport.size.height + 8
-
-                    guard reachesBottom != isAtBottom else { return }
-
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        isAtBottom = reachesBottom
-                    }
+                    .frame(maxWidth: 820)
+                    .padding(.horizontal, horizontalSizeClass == .compact ? 14 : 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 34)
                 }
             }
-            .navigationTitle("Controls")
+            .navigationTitle("Beauty of Fractals")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -5916,21 +5849,206 @@ iPad supports the larger export sizes. The zoom overlay is visible only in the a
                 }
             }
         }
+        .preferredColorScheme(.dark)
+        .onReceive(artworkTimer) { _ in
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.3)) {
+                currentArtwork = (currentArtwork + 1) % artworkNames.count
+            }
+        }
+    }
+
+    private var welcomeHero: some View {
+        VStack(spacing: 16) {
+            IOSWelcomeMonitorScene(
+                artworkNames: artworkNames,
+                currentArtwork: currentArtwork
+            )
+            .frame(height: horizontalSizeClass == .compact ? 230 : 390)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Lil’ Finder Guy watching colorful fractals on a large display")
+
+            VStack(spacing: 8) {
+                Text("Unendlich viel zu entdecken.")
+                    .font(.system(
+                        size: horizontalSizeClass == .compact ? 30 : 40,
+                        weight: .bold,
+                        design: .rounded
+                    ))
+                    .tracking(-0.9)
+                    .multilineTextAlignment(.center)
+
+                Text("Reise durch Mandelbrotwelten, finde überraschende Formen und verliere dich in Farben — flüssig gerendert und selbst bei erstaunlichen Tiefen noch präzise.")
+                    .font(.system(size: horizontalSizeClass == .compact ? 14 : 16))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+            }
+            .padding(.horizontal, 10)
+        }
+        .padding(horizontalSizeClass == .compact ? 14 : 22)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var featureSection: some View {
+        if horizontalSizeClass == .regular {
+            HStack(alignment: .top, spacing: 12) {
+                welcomeFeature(
+                    icon: "infinity",
+                    title: "Tief hinein",
+                    text: "Automatic Precision hält feine Strukturen auch weit im Deep Zoom sichtbar."
+                )
+                welcomeFeature(
+                    icon: "paintpalette.fill",
+                    title: "Deine Farben",
+                    text: "Entdecke ausdrucksstarke Paletten, Potenzen und viele Fraktalmodi."
+                )
+                welcomeFeature(
+                    icon: "star.fill",
+                    title: "Lieblingsorte",
+                    text: "Speichere Fundstücke und synchronisiere sie optional über iCloud."
+                )
+            }
+        } else {
+            VStack(spacing: 10) {
+                welcomeFeature(
+                    icon: "infinity",
+                    title: "Tief hinein",
+                    text: "Automatic Precision hält feine Strukturen auch weit im Deep Zoom sichtbar."
+                )
+                welcomeFeature(
+                    icon: "paintpalette.fill",
+                    title: "Deine Farben",
+                    text: "Entdecke ausdrucksstarke Paletten, Potenzen und viele Fraktalmodi."
+                )
+                welcomeFeature(
+                    icon: "star.fill",
+                    title: "Lieblingsorte",
+                    text: "Speichere Fundstücke und synchronisiere sie optional über iCloud."
+                )
+            }
+        }
+    }
+
+    private var quickStart: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Label("Quick Start", systemImage: "sparkles")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                Spacer()
+                Text("Alles bleibt lokal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 13) {
+                quickTip(icon: "hand.draw", text: "Ziehe einen Bereich auf, um hineinzuzoomen.")
+                quickTip(icon: "hand.point.up.left", text: "Bewege die Ansicht mit zwei Fingern.")
+                quickTip(icon: "arrow.up.left.and.arrow.down.right", text: "Pinch zum Zoomen, Doppeltipp zum direkten Eintauchen.")
+                quickTip(icon: "star", text: "Der Stern speichert und öffnet deine Lieblingsorte.")
+                quickTip(icon: "square.and.arrow.up", text: "Exportiere das Fraktal als PNG — ohne Bedienoberfläche.")
+            }
+
+            Divider()
+
+            Text("Wähle Fast, High oder Deep in der Steuerleiste. Bei extremen Mandelbrot-Zooms wechselt Beauty of Fractals automatisch zur hochpräzisen CPU-Berechnung.")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+        }
+        .padding(20)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        }
+    }
+
+    private func welcomeFeature(icon: String, title: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(
+                    LinearGradient(
+                        colors: [.blue, .purple],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                )
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
+        .padding(16)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func quickTip(icon: String, text: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.cyan)
+                .frame(width: 28)
+
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
-private struct HelpSection: View {
-    let title: String
-    let content: String
+private struct IOSWelcomeMonitorScene: View {
+    let artworkNames: [String]
+    let currentArtwork: Int
+
+    private let aspectRatio = 1672.0 / 941.0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title)
-                .font(.headline)
+        GeometryReader { proxy in
+            let width = min(proxy.size.width, proxy.size.height * aspectRatio)
+            let height = width / aspectRatio
+            let originX = (proxy.size.width - width) / 2
+            let originY = (proxy.size.height - height) / 2
 
-            Text(content)
-                .font(.body)
-                .fixedSize(horizontal: false, vertical: true)
+            ZStack(alignment: .topLeading) {
+                Color.clear
+
+                ZStack {
+                    Color.black
+                    ForEach(Array(artworkNames.enumerated()), id: \.offset) { index, name in
+                        Image(name)
+                            .resizable()
+                            .scaledToFill()
+                            .opacity(index == currentArtwork ? 1 : 0)
+                    }
+                }
+                .frame(width: width * 0.5855, height: height * 0.5855)
+                .clipShape(RoundedRectangle(cornerRadius: width * 0.01, style: .continuous))
+                .offset(
+                    x: originX + width * 0.2075,
+                    y: originY + height * 0.0967
+                )
+
+                Image("WelcomeFinderGuy")
+                    .resizable()
+                    .frame(width: width, height: height)
+                    .offset(x: originX, y: originY)
+            }
         }
     }
 }
