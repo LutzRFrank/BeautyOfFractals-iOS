@@ -455,6 +455,11 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
     case aurora = 14
     case pearl = 15
     case motherOfPearl = 16
+    case metallicDreams = 17
+    case embossedMetal = 18
+    case guilloche = 19
+    case spheroidGlass = 20
+    case quantumTraps = 21
     
     var id: Int {
         rawValue
@@ -496,6 +501,16 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "Marble"
         case .motherOfPearl:
             return "Pearl"
+        case .metallicDreams:
+            return "Metallic Dreams"
+        case .embossedMetal:
+            return "Embossed Metal"
+        case .guilloche:
+            return "Guilloché"
+        case .spheroidGlass:
+            return "Spheroid Glass"
+        case .quantumTraps:
+            return "Quantum Traps"
         }
     }
     
@@ -535,6 +550,16 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "Marble"
         case .motherOfPearl:
             return "Pearl"
+        case .metallicDreams:
+            return "MetallicDreams"
+        case .embossedMetal:
+            return "EmbossedMetal"
+        case .guilloche:
+            return "Guilloche"
+        case .spheroidGlass:
+            return "SpheroidGlass"
+        case .quantumTraps:
+            return "QuantumTraps"
         }
     }
 }
@@ -1063,6 +1088,13 @@ struct ContentView: View {
     
     @State private var maxIterations: Int = 300
     @State private var plateauTiltDegrees: Double = 82.0
+    @State private var doodadsStructure: Double = 0.05
+    @State private var doodadsComplexity: Double = 0.05
+    @State private var doodadsCurl: Double = 0.23
+    @State private var embossedRelief: Double = 0.50
+    @State private var guillocheEngraving: Double = 0.42
+    @State private var spheroidGlass: Double = 0.55
+    @State private var quantumInterference: Double = 0.46
     @State private var isSavingSnapshot: Bool = false
     @State private var exportStartDate: Date?
     @State private var exportStatusText: String?
@@ -1116,6 +1148,21 @@ struct ContentView: View {
 
     private var maximumBaseIterations: Int {
         renderQuality == .deep ? 32_000 : 24_000
+    }
+
+    private var activeAbstractStructure: Double {
+        switch fractalPalette {
+        case .embossedMetal:
+            return embossedRelief
+        case .guilloche:
+            return guillocheEngraving
+        case .spheroidGlass:
+            return spheroidGlass
+        case .quantumTraps:
+            return quantumInterference
+        default:
+            return doodadsStructure
+        }
     }
     
     private var exportIterationCap: Int {
@@ -1288,6 +1335,9 @@ struct ContentView: View {
                 preciseViewport: $preciseViewport,
                 maxIterations: $maxIterations,
                 plateauTiltDegrees: plateauTiltDegrees,
+                doodadsStructure: activeAbstractStructure,
+                doodadsComplexity: doodadsComplexity,
+                doodadsCurl: doodadsCurl,
                 renderQuality: renderQuality,
                 navigationStarted: recordNavigationStep,
                 clearExportStatus: clearExportStatus,
@@ -1763,6 +1813,27 @@ The zoom overlay is visible only in the app and is not included in exports.
                 .padding(.vertical, isCompact ? 6 : 8)
             }
             
+            if fractalPalette == .metallicDreams {
+                HStack(spacing: 8) {
+                    compactStyleSlider("Structure", value: $doodadsStructure)
+                    compactStyleSlider("Complexity", value: $doodadsComplexity)
+                    compactStyleSlider("Curl", value: $doodadsCurl)
+                }
+                .padding(.horizontal, isCompact ? 10 : 12)
+            } else if fractalPalette == .embossedMetal {
+                compactStyleSlider("Relief", value: $embossedRelief)
+                    .padding(.horizontal, isCompact ? 10 : 12)
+            } else if fractalPalette == .guilloche {
+                compactStyleSlider("Engraving", value: $guillocheEngraving)
+                    .padding(.horizontal, isCompact ? 10 : 12)
+            } else if fractalPalette == .spheroidGlass {
+                compactStyleSlider("Glass", value: $spheroidGlass)
+                    .padding(.horizontal, isCompact ? 10 : 12)
+            } else if fractalPalette == .quantumTraps {
+                compactStyleSlider("Interference", value: $quantumInterference)
+                    .padding(.horizontal, isCompact ? 10 : 12)
+            }
+
             HStack(spacing: isCompact ? 6 : 8) {
                 if fractalMode == .mandelbrotPlateau {
                     Text("Tilt \(Int(plateauTiltDegrees.rounded()))°")
@@ -1854,6 +1925,18 @@ The zoom overlay is visible only in the app and is not included in exports.
         .clipShape(RoundedRectangle(cornerRadius: isCompact ? 20 : 24, style: .continuous))
         .shadow(color: .black.opacity(0.35), radius: 18, x: 0, y: 8)
         .frame(maxWidth: isCompact ? 360 : 980)
+    }
+
+    private func compactStyleSlider(
+        _ title: String,
+        value: Binding<Double>
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.caption2)
+                .fontWeight(.semibold)
+            Slider(value: value, in: 0...1)
+        }
     }
     
     private func applyPreciseViewport(_ viewport: PreciseViewport) {
@@ -1984,6 +2067,9 @@ The zoom overlay is visible only in the app and is not included in exports.
         let snapshotCenterY = centerY
         let snapshotScale = scale
         let snapshotPreciseViewport = preciseViewport
+        let snapshotAbstractStructure = activeAbstractStructure
+        let snapshotAbstractComplexity = doodadsComplexity
+        let snapshotAbstractCurl = doodadsCurl
         #if os(iOS)
         let snapshotSupersampling = isPhoneDevice && exportWidth > 1440 ? 1 : max(1, min(supersampling, 2))
         #else
@@ -2058,6 +2144,9 @@ The zoom overlay is visible only in the app and is not included in exports.
                 iterations: snapshotIterations,
                 doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
                 tripleDoubleEnabled: snapshotTripleDoubleEnabled,
+                doodadsStructure: snapshotAbstractStructure,
+                doodadsComplexity: snapshotAbstractComplexity,
+                doodadsCurl: snapshotAbstractCurl,
                 cachedHighPrecisionImage: snapshotCachedHighPrecisionImage
             )
         }
@@ -2077,6 +2166,9 @@ The zoom overlay is visible only in the app and is not included in exports.
             iterations: snapshotIterations,
             doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
             tripleDoubleEnabled: snapshotTripleDoubleEnabled,
+            doodadsStructure: snapshotAbstractStructure,
+            doodadsComplexity: snapshotAbstractComplexity,
+            doodadsCurl: snapshotAbstractCurl,
             cachedHighPrecisionImage: snapshotCachedHighPrecisionImage
         )
         #endif
@@ -2096,6 +2188,9 @@ The zoom overlay is visible only in the app and is not included in exports.
         iterations snapshotIterations: Int,
         doubleDoubleEnabled snapshotDoubleDoubleEnabled: Bool,
         tripleDoubleEnabled snapshotTripleDoubleEnabled: Bool,
+        doodadsStructure snapshotDoodadsStructure: Double,
+        doodadsComplexity snapshotDoodadsComplexity: Double,
+        doodadsCurl snapshotDoodadsCurl: Double,
         cachedHighPrecisionImage: CGImage? = nil
     ) {
         isSavingSnapshot = true
@@ -2137,6 +2232,10 @@ The zoom overlay is visible only in the app and is not included in exports.
                     maxIterations: snapshotIterations,
                     doubleDoubleEnabled: snapshotDoubleDoubleEnabled,
                     tripleDoubleEnabled: snapshotTripleDoubleEnabled
+                    ,
+                    doodadsStructure: snapshotDoodadsStructure,
+                    doodadsComplexity: snapshotDoodadsComplexity,
+                    doodadsCurl: snapshotDoodadsCurl
                 )
             }
             
@@ -2230,6 +2329,9 @@ struct MandelbrotView: View {
     @Binding var preciseViewport: PreciseViewport
     @Binding var maxIterations: Int
     let plateauTiltDegrees: Double
+    let doodadsStructure: Double
+    let doodadsComplexity: Double
+    let doodadsCurl: Double
     let renderQuality: RenderQuality
     let navigationStarted: () -> Void
     let clearExportStatus: () -> Void
@@ -2379,6 +2481,9 @@ struct MandelbrotView: View {
                         scale: scale,
                         maxIterations: metalDisplayedIterations,
                         plateauTiltDegrees: plateauTiltDegrees,
+                        doodadsStructure: doodadsStructure,
+                        doodadsComplexity: doodadsComplexity,
+                        doodadsCurl: doodadsCurl,
                         viewportAspectRatio: viewportAspectRatio
                     )
 
@@ -3692,7 +3797,10 @@ nonisolated func renderFractalSupersampled(
     preciseViewport: PreciseViewport? = nil,
     maxIterations: Int,
     doubleDoubleEnabled: Bool = false,
-    tripleDoubleEnabled: Bool = false
+    tripleDoubleEnabled: Bool = false,
+    doodadsStructure: Double = 0.05,
+    doodadsComplexity: Double = 0.05,
+    doodadsCurl: Double = 0.23
 ) -> CGImage? {
     let factor = max(1, min(supersampling, 3))
     
@@ -3709,6 +3817,10 @@ nonisolated func renderFractalSupersampled(
             maxIterations: maxIterations,
             doubleDoubleEnabled: doubleDoubleEnabled,
             tripleDoubleEnabled: tripleDoubleEnabled
+            ,
+            doodadsStructure: doodadsStructure,
+            doodadsComplexity: doodadsComplexity,
+            doodadsCurl: doodadsCurl
         )
     }
     
@@ -3758,6 +3870,18 @@ nonisolated func renderFractalSupersampled(
                             palette: palette,
                             maxIterations: maxIterations
                         )
+                    } else if let trapped = abstractTrapColor(
+                        palette: palette,
+                        mode: mode,
+                        x0: x0,
+                        y0: y0,
+                        sampleStep: scale / Double(sampleHeight),
+                        maxIterations: maxIterations,
+                        structure: doodadsStructure,
+                        complexity: doodadsComplexity,
+                        curl: doodadsCurl
+                    ) {
+                        color = trapped
                     } else {
                         let iteration = calculateFractalIteration(
                             mode: mode,
@@ -4155,6 +4279,9 @@ nonisolated func renderFractal(
     doubleDoubleEnabled: Bool = false,
     tripleDoubleEnabled: Bool = false,
     automaticIterationsEnabled: Bool = false,
+    doodadsStructure: Double = 0.05,
+    doodadsComplexity: Double = 0.05,
+    doodadsCurl: Double = 0.23,
     iterationTargetCallback: (@Sendable (Int) -> Void)? = nil,
     progressCallback: (@Sendable (Double) -> Void)? = nil
 ) -> CGImage? {
@@ -4227,6 +4354,18 @@ nonisolated func renderFractal(
                     palette: palette,
                     maxIterations: maxIterations
                 )
+            } else if let trapped = abstractTrapColor(
+                palette: palette,
+                mode: mode,
+                x0: x0,
+                y0: y0,
+                sampleStep: scale / Double(height),
+                maxIterations: maxIterations,
+                structure: doodadsStructure,
+                complexity: doodadsComplexity,
+                curl: doodadsCurl
+            ) {
+                color = trapped
             } else {
                 var localMaxIterations = maxIterations
                 var iteration = calculateFractalIteration(
@@ -4849,6 +4988,15 @@ nonisolated private func calculateNewtonColor(
         } else {
             rootColor = (1.00, 0.68, 0.08)
         }
+    case .metallicDreams, .embossedMetal:
+        rootColor = nearestRootIndex == 0 ? (0.08, 0.035, 0.012) :
+            nearestRootIndex == 1 ? (0.78, 0.46, 0.12) : (1.00, 0.90, 0.68)
+    case .guilloche:
+        rootColor = nearestRootIndex == 0 ? (0.02, 0.05, 0.08) :
+            nearestRootIndex == 1 ? (0.76, 0.48, 0.16) : (1.00, 0.88, 0.58)
+    case .spheroidGlass, .quantumTraps:
+        rootColor = nearestRootIndex == 0 ? (0.01, 0.08, 0.15) :
+            nearestRootIndex == 1 ? (0.16, 0.62, 0.78) : (0.92, 0.96, 1.00)
     }
     
     let background = 0.05 + 0.12 * edge
@@ -5051,6 +5199,137 @@ nonisolated private func cpuPaletteColor(
     }
     
     return base
+}
+
+nonisolated private func abstractTrapColor(
+    palette: FractalPalette,
+    mode: FractalMode,
+    x0: Double,
+    y0: Double,
+    sampleStep: Double,
+    maxIterations: Int,
+    structure: Double,
+    complexity: Double,
+    curl: Double
+) -> (r: Double, g: Double, b: Double)? {
+    guard [.metallicDreams, .embossedMetal, .guilloche, .spheroidGlass, .quantumTraps]
+        .contains(palette) else { return nil }
+
+    if palette == .embossedMetal {
+        let center = calculateFractalIteration(mode: mode, x0: x0, y0: y0, maxIterations: maxIterations)
+        let right = calculateFractalIteration(mode: mode, x0: x0 + sampleStep, y0: y0, maxIterations: maxIterations)
+        let down = calculateFractalIteration(mode: mode, x0: x0, y0: y0 + sampleStep, maxIterations: maxIterations)
+        let denominator = Double(max(maxIterations, 1))
+        let height = sqrt(Double(center) / denominator)
+        let relief = 12.0 + 60.0 * clamp01(structure)
+        let dx = (sqrt(Double(right) / denominator) - height) * relief
+        let dy = (sqrt(Double(down) / denominator) - height) * relief
+        let length = sqrt(dx * dx + dy * dy + 1.0)
+        let diffuse = clamp01(dx / length * 0.48 - dy / length * 0.40 + 0.78 / length)
+        let rim = pow(clamp01(1.0 - 1.0 / length), 1.35)
+        let contour = pow(0.5 + 0.5 * cos(52.0 * sqrt(max(height, 0.0))), 7.0)
+        let shade = center == maxIterations ? 0.28 : 1.0
+        return (
+            clamp01(((0.10 + 0.62 * height) * (0.18 + 0.82 * diffuse) + 0.48 * rim + 0.32 * contour) * shade),
+            clamp01(((0.105 + 0.47 * height) * (0.18 + 0.82 * diffuse) + 0.36 * rim + 0.24 * contour) * shade),
+            clamp01(((0.11 + 0.29 * height) * (0.18 + 0.82 * diffuse) + 0.22 * rim + 0.15 * contour) * shade)
+        )
+    }
+
+    var zx = mode == .julia ? x0 : 0.0
+    var zy = mode == .julia ? y0 : 0.0
+    let cx = mode == .julia ? -0.8 : x0
+    let cy = mode == .julia ? 0.156 : y0
+    let exponent = mode.powerExponent ?? 2
+    let separation = 0.08 + 0.24 * clamp01(structure)
+    let traps = [(-separation, 0.0, 0.28), (separation, 0.0, 0.22), (0.0, separation * 0.86, 0.18)]
+    var closest = Double.greatestFiniteMagnitude
+    var second = Double.greatestFiniteMagnitude
+    var localX = 0.0
+    var localY = 0.0
+    var radius = 0.28
+    var closestIteration = 0
+    var iteration = 0
+
+    while iteration < maxIterations {
+        var powerX = zx
+        var powerY = zy
+        if exponent > 1 {
+            for _ in 1..<exponent {
+                let nextX = powerX * zx - powerY * zy
+                powerY = powerX * zy + powerY * zx
+                powerX = nextX
+            }
+        }
+        zx = powerX + cx
+        zy = powerY + cy
+
+        if palette == .metallicDreams || palette == .guilloche {
+            let orbitRadius = max(hypot(zx, zy), 1e-8)
+            let angle = atan2(zy, zx)
+            let density = palette == .guilloche ? 5.0 + 10.0 * structure : 4.0 + floor(structure * 7.0)
+            let rosette = abs(orbitRadius - 0.30 - 0.07 * cos(density * angle))
+            let thread = abs(sin(density * angle + (2.0 + 3.4 * curl) * log(orbitRadius + 0.04)))
+                * orbitRadius * (0.07 + 0.10 * (1.0 - complexity))
+            let distance = min(rosette, thread)
+            if distance < closest {
+                closest = distance
+                closestIteration = iteration
+            }
+        } else {
+            for trap in traps {
+                let tx = zx - trap.0
+                let ty = zy - trap.1
+                let distance = abs(hypot(tx, ty) - trap.2)
+                if distance < closest {
+                    second = closest
+                    closest = distance
+                    localX = tx
+                    localY = ty
+                    radius = trap.2
+                    closestIteration = iteration
+                } else if distance < second {
+                    second = distance
+                }
+            }
+        }
+        iteration += 1
+        if zx * zx + zy * zy > 256.0 { break }
+    }
+
+    if palette == .metallicDreams || palette == .guilloche {
+        let ink = exp(-(palette == .guilloche ? 48.0 + 24.0 * structure : 23.0 - 8.0 * complexity) * sqrt(max(closest, 0.0)))
+        let weave = 0.5 + 0.5 * cos(0.44 * Double(closestIteration) + 30.0 * pow(max(closest, 1e-8), 0.24))
+        let line = pow(clamp01(ink), palette == .guilloche ? 2.5 : 2.1)
+        let shade = iteration == maxIterations ? 0.52 : 1.0
+        return palette == .guilloche
+            ? (clamp01((0.022 + 0.80 * line * weave) * shade),
+               clamp01((0.032 + 0.62 * line * weave) * shade),
+               clamp01((0.044 + 0.34 * line * weave) * shade))
+            : (clamp01((0.008 + 0.72 * line + 0.50 * pow(line * weave, 3.0)) * shade),
+               clamp01((0.0035 + 0.30 * line + 0.44 * pow(line * weave, 3.0)) * shade),
+               clamp01((0.0015 + 0.075 * line + 0.32 * pow(line * weave, 3.0)) * shade))
+    }
+
+    let radial = max(hypot(localX, localY), 1e-8)
+    let nx = localX / radial
+    let ny = localY / radial
+    let nz = sqrt(max(1.0 - pow(clamp01(closest / radius), 2.0), 0.0))
+    let diffuse = clamp01(nx * -0.44 + ny * 0.33 + nz * 0.83)
+    let lens = exp(-(20.0 + 22.0 * structure) * closest)
+    let rim = pow(clamp01(1.0 - nz), 1.55)
+    let phase = 0.5 + 0.5 * cos(0.52 * Double(closestIteration) + 18.0 * closest)
+    let overlap = palette == .quantumTraps
+        ? exp(-(34.0 - 16.0 * structure) * abs(second - closest)) * lens
+        : 0.0
+    let hot = pow(overlap * phase, 2.4)
+    let cold = pow(lens * (1.0 - phase), 2.0)
+    let shade = iteration == maxIterations ? 0.52 : 1.0
+    return (
+        clamp01((0.008 + 0.10 * lens * diffuse + 0.34 * rim + hot + 0.18 * cold) * shade),
+        clamp01((0.014 + 0.28 * lens * diffuse + 0.48 * rim + 0.58 * hot + 0.62 * cold) * shade),
+        clamp01((0.032 + 0.48 * lens * diffuse + 0.70 * rim + 0.20 * hot + 0.92 * cold) * shade)
+    )
 }
 
 nonisolated private func paletteBaseColor(
@@ -5433,6 +5712,41 @@ nonisolated private func paletteBaseColor(
             clamp01(color.1 + 0.19 * ridgeHot + 0.03 * ridgeGold),
             clamp01(color.2 + 0.10 * ridgeHot + 0.015 * ridgeGold)
         )
+    case .metallicDreams:
+        let body = pow(relief, 0.62)
+        let metal = pow(ridge, 3.4)
+        let warm = pow(glow, 1.2)
+        return (
+            clamp01(0.01 + 0.52 * body + 0.45 * warm + 0.42 * metal),
+            clamp01(0.006 + 0.20 * body + 0.18 * warm + 0.38 * metal),
+            clamp01(0.003 + 0.045 * body + 0.05 * warm + 0.30 * metal)
+        )
+    case .embossedMetal:
+        return (
+            clamp01(0.04 + 0.46 * pow(relief, 0.60) + 0.34 * glow + 0.30 * pow(ridge, 2.8)),
+            clamp01(0.045 + 0.36 * pow(relief, 0.60) + 0.26 * glow + 0.23 * pow(ridge, 2.8)),
+            clamp01(0.05 + 0.24 * pow(relief, 0.60) + 0.16 * glow + 0.14 * pow(ridge, 2.8))
+        )
+    case .guilloche:
+        let line = pow(ridge, 4.0)
+        let body = pow(relief, 0.70)
+        return (
+            clamp01(0.015 + 0.24 * body + 0.72 * line),
+            clamp01(0.025 + 0.17 * body + 0.56 * line),
+            clamp01(0.035 + 0.13 * body + 0.30 * line)
+        )
+    case .spheroidGlass:
+        return (
+            clamp01(0.01 + 0.20 * relief + 0.48 * pow(glow, 0.65) + 0.32 * pow(ridge, 3.0)),
+            clamp01(0.02 + 0.42 * relief + 0.62 * pow(glow, 0.65) + 0.40 * pow(ridge, 3.0)),
+            clamp01(0.03 + 0.50 * relief + 0.58 * pow(glow, 0.65) + 0.34 * pow(ridge, 3.0))
+        )
+    case .quantumTraps:
+        return (
+            clamp01(0.01 + 0.18 * relief + 0.82 * pow(ridge, 3.4) + 0.24 * pow(glow, 0.72)),
+            clamp01(0.02 + 0.38 * relief + 0.52 * pow(ridge, 3.4) + 0.54 * pow(glow, 0.72)),
+            clamp01(0.05 + 0.62 * relief + 0.22 * pow(ridge, 3.4) + 0.72 * pow(glow, 0.72))
+        )
     }
 }
 
@@ -5497,6 +5811,12 @@ nonisolated private func insideColor(
             return (0.560, 0.345, 0.085)
         case .aurora:
             return (0.004, 0.010, 0.060)
+        case .metallicDreams, .embossedMetal:
+            return (0.025, 0.012, 0.004)
+        case .guilloche:
+            return (0.006, 0.012, 0.018)
+        case .spheroidGlass, .quantumTraps:
+            return (0.004, 0.010, 0.020)
         }
     }
     

@@ -24,6 +24,9 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
     let maxIterations: Int
     let colorNormalizationIterations: Int? = nil
     let plateauTiltDegrees: Double
+    let doodadsStructure: Double
+    let doodadsComplexity: Double
+    let doodadsCurl: Double
     let viewportAspectRatio: Double?
     
     func makeCoordinator() -> Coordinator {
@@ -82,6 +85,9 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
             UInt32(clamping: $0)
         } ?? 0
         context.coordinator.plateauTiltDegrees = Float(plateauTiltDegrees)
+        context.coordinator.doodadsStructure = Float(doodadsStructure)
+        context.coordinator.doodadsComplexity = Float(doodadsComplexity)
+        context.coordinator.doodadsCurl = Float(doodadsCurl)
         context.coordinator.viewportAspectRatio = viewportAspectRatio.map(Float.init)
         
         nsView.setNeedsDisplay(nsView.bounds)
@@ -104,6 +110,9 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
         var colorNormalizationIterations: UInt32 = 0
         var viewportAspectRatio: Float?
         var plateauTiltDegrees: Float = 82.0
+        var doodadsStructure: Float = 0.33
+        var doodadsComplexity: Float = 0.50
+        var doodadsCurl: Float = 0.50
         
         struct Uniforms {
             var centerX: Float
@@ -115,6 +124,9 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
             var fractalMode: UInt32
             var fractalPalette: UInt32
             var plateauTiltDegrees: Float
+            var doodadsStructure: Float
+            var doodadsComplexity: Float
+            var doodadsCurl: Float
         }
         
         func setup(device: MTLDevice, pixelFormat: MTLPixelFormat) {
@@ -179,7 +191,10 @@ struct MetalMandelbrotView: PlatformViewRepresentable {
                 aspectRatio: aspectRatio,
                 fractalMode: fractalMode,
                 fractalPalette: fractalPalette,
-                plateauTiltDegrees: plateauTiltDegrees
+                plateauTiltDegrees: plateauTiltDegrees,
+                doodadsStructure: doodadsStructure,
+                doodadsComplexity: doodadsComplexity,
+                doodadsCurl: doodadsCurl
             )
             
             guard let commandBuffer = commandQueue.makeCommandBuffer() else {
