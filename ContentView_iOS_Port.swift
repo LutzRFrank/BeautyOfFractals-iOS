@@ -460,6 +460,7 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
     case guilloche = 19
     case spheroidGlass = 20
     case quantumTraps = 21
+    case orbitalWaves = 22
     
     var id: Int {
         rawValue
@@ -511,6 +512,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "Spheroid Glass"
         case .quantumTraps:
             return "Quantum Traps"
+        case .orbitalWaves:
+            return "Orbital Waves"
         }
     }
     
@@ -560,6 +563,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "SpheroidGlass"
         case .quantumTraps:
             return "QuantumTraps"
+        case .orbitalWaves:
+            return "OrbitalWaves"
         }
     }
 }
@@ -1095,6 +1100,7 @@ struct ContentView: View {
     @State private var guillocheEngraving: Double = 0.42
     @State private var spheroidGlass: Double = 0.55
     @State private var quantumInterference: Double = 0.46
+    @State private var orbitalWaves: Double = 0.48
     @State private var isSavingSnapshot: Bool = false
     @State private var exportStartDate: Date?
     @State private var exportStatusText: String?
@@ -1160,6 +1166,8 @@ struct ContentView: View {
             return spheroidGlass
         case .quantumTraps:
             return quantumInterference
+        case .orbitalWaves:
+            return orbitalWaves
         default:
             return doodadsStructure
         }
@@ -1831,6 +1839,9 @@ The zoom overlay is visible only in the app and is not included in exports.
                     .padding(.horizontal, isCompact ? 10 : 12)
             } else if fractalPalette == .quantumTraps {
                 compactStyleSlider("Interference", value: $quantumInterference)
+                    .padding(.horizontal, isCompact ? 10 : 12)
+            } else if fractalPalette == .orbitalWaves {
+                compactStyleSlider("Waves", value: $orbitalWaves)
                     .padding(.horizontal, isCompact ? 10 : 12)
             }
 
@@ -4994,7 +5005,7 @@ nonisolated private func calculateNewtonColor(
     case .guilloche:
         rootColor = nearestRootIndex == 0 ? (0.02, 0.05, 0.08) :
             nearestRootIndex == 1 ? (0.76, 0.48, 0.16) : (1.00, 0.88, 0.58)
-    case .spheroidGlass, .quantumTraps:
+    case .spheroidGlass, .quantumTraps, .orbitalWaves:
         rootColor = nearestRootIndex == 0 ? (0.01, 0.08, 0.15) :
             nearestRootIndex == 1 ? (0.16, 0.62, 0.78) : (0.92, 0.96, 1.00)
     }
@@ -5212,7 +5223,7 @@ nonisolated private func abstractTrapColor(
     complexity: Double,
     curl: Double
 ) -> (r: Double, g: Double, b: Double)? {
-    guard [.metallicDreams, .embossedMetal, .guilloche, .spheroidGlass, .quantumTraps]
+    guard [.metallicDreams, .embossedMetal, .guilloche, .spheroidGlass, .quantumTraps, .orbitalWaves]
         .contains(palette) else { return nil }
 
     if palette == .embossedMetal {
@@ -5249,6 +5260,7 @@ nonisolated private func abstractTrapColor(
     var localY = 0.0
     var radius = 0.28
     var closestIteration = 0
+    var closestPhase = 0.0
     var iteration = 0
 
     while iteration < maxIterations {
@@ -5264,7 +5276,19 @@ nonisolated private func abstractTrapColor(
         zx = powerX + cx
         zy = powerY + cy
 
-        if palette == .metallicDreams || palette == .guilloche {
+        if palette == .orbitalWaves {
+            let orbitRadius = max(hypot(zx, zy), 1e-8)
+            let angle = atan2(zy, zx)
+            let phase = (8.0 + 20.0 * structure) * log(orbitRadius + 0.06)
+                + (3.0 + 5.0 * structure) * angle
+                - 0.24 * Double(iteration)
+            let distance = abs(sin(phase)) * min(orbitRadius, 1.0)
+            if distance < closest {
+                closest = distance
+                closestPhase = phase
+                closestIteration = iteration
+            }
+        } else if palette == .metallicDreams || palette == .guilloche {
             let orbitRadius = max(hypot(zx, zy), 1e-8)
             let angle = atan2(zy, zx)
             let density = palette == .guilloche ? 5.0 + 10.0 * structure : 4.0 + floor(structure * 7.0)
@@ -5295,6 +5319,20 @@ nonisolated private func abstractTrapColor(
         }
         iteration += 1
         if zx * zx + zy * zy > 256.0 { break }
+    }
+
+    if palette == .orbitalWaves {
+        let wave = exp(-(30.0 + 34.0 * structure) * sqrt(max(closest, 0.0)))
+        let crest = pow(wave, 2.2)
+        let interference = 0.5 + 0.5 * cos(0.38 * Double(closestIteration) + 2.0 * closestPhase)
+        let hot = pow(crest * interference, 2.2)
+        let cold = pow(crest * (1.0 - interference), 1.7)
+        let shade = iteration == maxIterations ? 0.72 : 1.0
+        return (
+            clamp01((0.018 + 0.26 * wave + 1.05 * hot + 0.20 * cold) * shade),
+            clamp01((0.034 + 0.62 * wave + 0.72 * hot + 0.88 * cold) * shade),
+            clamp01((0.072 + 0.95 * wave + 0.30 * hot + 1.12 * cold) * shade)
+        )
     }
 
     if palette == .metallicDreams || palette == .guilloche {
@@ -5747,6 +5785,12 @@ nonisolated private func paletteBaseColor(
             clamp01(0.02 + 0.38 * relief + 0.52 * pow(ridge, 3.4) + 0.54 * pow(glow, 0.72)),
             clamp01(0.05 + 0.62 * relief + 0.22 * pow(ridge, 3.4) + 0.72 * pow(glow, 0.72))
         )
+    case .orbitalWaves:
+        return (
+            clamp01(0.01 + 0.16 * relief + 0.70 * pow(ridge, 2.8) + 0.24 * pow(glow, 0.70)),
+            clamp01(0.02 + 0.40 * relief + 0.58 * pow(ridge, 2.8) + 0.58 * pow(glow, 0.70)),
+            clamp01(0.05 + 0.68 * relief + 0.30 * pow(ridge, 2.8) + 0.82 * pow(glow, 0.70))
+        )
     }
 }
 
@@ -5815,7 +5859,7 @@ nonisolated private func insideColor(
             return (0.025, 0.012, 0.004)
         case .guilloche:
             return (0.006, 0.012, 0.018)
-        case .spheroidGlass, .quantumTraps:
+        case .spheroidGlass, .quantumTraps, .orbitalWaves:
             return (0.004, 0.010, 0.020)
         }
     }
