@@ -1144,7 +1144,6 @@ struct ContentView: View {
     @State private var exportURL: URL?
     @State private var showExportPicker = false
     @State private var controlsAreCollapsed = false
-    @State private var controlsActivityRevision: UInt = 0
     #endif
     
     private var effectiveIterations: Int {
@@ -1246,7 +1245,6 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
             controlsAreCollapsed = false
         }
-        controlsActivityRevision &+= 1
     }
 
     private func hideControls() {
@@ -1313,18 +1311,6 @@ struct ContentView: View {
             .spring(response: 0.30, dampingFraction: 0.84),
             value: controlsAreCollapsed
         )
-        .task(id: controlsActivityRevision) {
-            guard isPhoneDevice else { return }
-
-            do {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
-            } catch {
-                return
-            }
-
-            guard !Task.isCancelled else { return }
-            hideControls()
-        }
         .onChange(of: maxIterations) {
             showControls()
         }
