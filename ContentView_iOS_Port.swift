@@ -461,6 +461,7 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
     case spheroidGlass = 20
     case quantumTraps = 21
     case orbitalWaves = 22
+    case quantumGlass = 23
     
     var id: Int {
         rawValue
@@ -514,6 +515,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "Quantum Traps"
         case .orbitalWaves:
             return "Orbital Waves"
+        case .quantumGlass:
+            return "Quantum Glass"
         }
     }
     
@@ -565,6 +568,8 @@ enum FractalPalette: Int, CaseIterable, Identifiable {
             return "QuantumTraps"
         case .orbitalWaves:
             return "OrbitalWaves"
+        case .quantumGlass:
+            return "QuantumGlass"
         }
     }
 }
@@ -1162,7 +1167,7 @@ struct ContentView: View {
             return embossedRelief
         case .guilloche:
             return guillocheEngraving
-        case .spheroidGlass:
+        case .spheroidGlass, .quantumGlass:
             return spheroidGlass
         case .quantumTraps:
             return quantumInterference
@@ -1834,7 +1839,7 @@ The zoom overlay is visible only in the app and is not included in exports.
             } else if fractalPalette == .guilloche {
                 compactStyleSlider("Engraving", value: $guillocheEngraving)
                     .padding(.horizontal, isCompact ? 10 : 12)
-            } else if fractalPalette == .spheroidGlass {
+            } else if fractalPalette == .spheroidGlass || fractalPalette == .quantumGlass {
                 compactStyleSlider("Glass", value: $spheroidGlass)
                     .padding(.horizontal, isCompact ? 10 : 12)
             } else if fractalPalette == .quantumTraps {
@@ -5005,7 +5010,7 @@ nonisolated private func calculateNewtonColor(
     case .guilloche:
         rootColor = nearestRootIndex == 0 ? (0.02, 0.05, 0.08) :
             nearestRootIndex == 1 ? (0.76, 0.48, 0.16) : (1.00, 0.88, 0.58)
-    case .spheroidGlass, .quantumTraps, .orbitalWaves:
+    case .spheroidGlass, .quantumTraps, .orbitalWaves, .quantumGlass:
         rootColor = nearestRootIndex == 0 ? (0.01, 0.08, 0.15) :
             nearestRootIndex == 1 ? (0.16, 0.62, 0.78) : (0.92, 0.96, 1.00)
     }
@@ -5223,7 +5228,7 @@ nonisolated private func abstractTrapColor(
     complexity: Double,
     curl: Double
 ) -> (r: Double, g: Double, b: Double)? {
-    guard [.metallicDreams, .embossedMetal, .guilloche, .spheroidGlass, .quantumTraps, .orbitalWaves]
+    guard [.metallicDreams, .embossedMetal, .guilloche, .spheroidGlass, .quantumTraps, .orbitalWaves, .quantumGlass]
         .contains(palette) else { return nil }
 
     if palette == .embossedMetal {
@@ -5253,7 +5258,9 @@ nonisolated private func abstractTrapColor(
     let cy = mode == .julia ? 0.156 : y0
     let exponent = mode.powerExponent ?? 2
     let separation = 0.08 + 0.24 * clamp01(structure)
-    let traps = [(-separation, 0.0, 0.28), (separation, 0.0, 0.22), (0.0, separation * 0.86, 0.18)]
+    let traps = palette == .spheroidGlass || palette == .quantumGlass
+        ? [(0.0, 0.0, 0.24 + 0.18 * clamp01(structure))]
+        : [(-separation, 0.0, 0.28), (separation, 0.0, 0.22), (0.0, separation * 0.86, 0.18)]
     var closest = Double.greatestFiniteMagnitude
     var second = Double.greatestFiniteMagnitude
     var localX = 0.0
@@ -5360,7 +5367,8 @@ nonisolated private func abstractTrapColor(
     let overlap = palette == .quantumTraps
         ? exp(-(34.0 - 16.0 * structure) * abs(second - closest)) * lens
         : 0.0
-    let hot = pow(overlap * phase, 2.4)
+    let hotSource = palette == .quantumGlass ? lens : overlap
+    let hot = pow(hotSource * phase, 2.4)
     let cold = pow(lens * (1.0 - phase), 2.0)
     let shade = iteration == maxIterations ? 0.52 : 1.0
     return (
@@ -5791,6 +5799,12 @@ nonisolated private func paletteBaseColor(
             clamp01(0.02 + 0.40 * relief + 0.58 * pow(ridge, 2.8) + 0.58 * pow(glow, 0.70)),
             clamp01(0.05 + 0.68 * relief + 0.30 * pow(ridge, 2.8) + 0.82 * pow(glow, 0.70))
         )
+    case .quantumGlass:
+        return (
+            clamp01(0.01 + 0.18 * relief + 0.82 * pow(ridge, 3.4) + 0.24 * pow(glow, 0.72)),
+            clamp01(0.02 + 0.38 * relief + 0.52 * pow(ridge, 3.4) + 0.54 * pow(glow, 0.72)),
+            clamp01(0.05 + 0.62 * relief + 0.22 * pow(ridge, 3.4) + 0.72 * pow(glow, 0.72))
+        )
     }
 }
 
@@ -5859,7 +5873,7 @@ nonisolated private func insideColor(
             return (0.025, 0.012, 0.004)
         case .guilloche:
             return (0.006, 0.012, 0.018)
-        case .spheroidGlass, .quantumTraps, .orbitalWaves:
+        case .spheroidGlass, .quantumTraps, .orbitalWaves, .quantumGlass:
             return (0.004, 0.010, 0.020)
         }
     }
