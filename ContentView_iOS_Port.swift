@@ -3980,6 +3980,210 @@ nonisolated private final class DirectRenderBandProgress: @unchecked Sendable {
     }
 }
 
+nonisolated private final class IOSDeepOrbitArtAccumulator {
+    let palette: FractalPalette
+    let structure: Double
+    let complexity: Double
+    let curl: Double
+
+    private var closest = Double.greatestFiniteMagnitude
+    private var second = Double.greatestFiniteMagnitude
+    private var localX = 0.0
+    private var localY = 0.0
+    private var trapRadius = 0.28
+    private var closestIteration = 0
+    private var closestPhase = 0.0
+
+    init(
+        palette: FractalPalette,
+        structure: Double,
+        complexity: Double,
+        curl: Double
+    ) {
+        self.palette = palette
+        self.structure = structure
+        self.complexity = complexity
+        self.curl = curl
+    }
+
+    func observe(iteration: Int, x: Double, y: Double) {
+        let radius = max(hypot(x, y), 1e-8)
+        let angle = atan2(y, x)
+
+        if palette == .orbitalWaves {
+            let phase = (8.0 + 20.0 * structure) * log(radius + 0.06)
+                + (3.0 + 5.0 * structure) * angle
+                - 0.24 * Double(iteration)
+            let distance = abs(sin(phase)) * min(radius, 1.0)
+            if distance < closest {
+                closest = distance
+                closestPhase = phase
+                closestIteration = iteration
+            }
+            return
+        }
+
+        if palette == .metallicDreams || palette == .guilloche {
+            let density = palette == .guilloche
+                ? 5.0 + 10.0 * structure
+                : 4.0 + floor(structure * 7.0)
+            let rosette = abs(
+                radius - 0.30 - 0.07 * cos(density * angle)
+            )
+            let thread = abs(
+                sin(
+                    density * angle
+                        + (2.0 + 3.4 * curl) * log(radius + 0.04)
+                )
+            ) * radius * (0.07 + 0.10 * (1.0 - complexity))
+            let distance = min(rosette, thread)
+            if distance < closest {
+                closest = distance
+                closestIteration = iteration
+            }
+            return
+        }
+
+        let separation = 0.08 + 0.24 * clamp01(structure)
+        let traps = palette == .spheroidGlass || palette == .quantumGlass
+            ? [(0.0, 0.0, 0.24 + 0.18 * clamp01(structure))]
+            : [
+                (-separation, 0.0, 0.28),
+                (separation, 0.0, 0.22),
+                (0.0, separation * 0.86, 0.18)
+            ]
+
+        for trap in traps {
+            let tx = x - trap.0
+            let ty = y - trap.1
+            let distance = abs(hypot(tx, ty) - trap.2)
+            if distance < closest {
+                second = closest
+                closest = distance
+                localX = tx
+                localY = ty
+                trapRadius = trap.2
+                closestIteration = iteration
+            } else if distance < second {
+                second = distance
+            }
+        }
+    }
+
+    func color(
+        iteration: Int,
+        maxIterations: Int
+    ) -> (r: Double, g: Double, b: Double)? {
+        guard closest.isFinite else { return nil }
+
+        if palette == .orbitalWaves {
+            let wave = exp(
+                -(30.0 + 34.0 * structure) * sqrt(max(closest, 0.0))
+            )
+            let crest = pow(wave, 2.2)
+            let interference = 0.5 + 0.5 * cos(
+                0.38 * Double(closestIteration) + 2.0 * closestPhase
+            )
+            let hot = pow(crest * interference, 2.2)
+            let cold = pow(crest * (1.0 - interference), 1.7)
+            let shade = iteration == maxIterations ? 0.72 : 1.0
+            return (
+                clamp01((0.018 + 0.26 * wave + 1.05 * hot + 0.20 * cold) * shade),
+                clamp01((0.034 + 0.62 * wave + 0.72 * hot + 0.88 * cold) * shade),
+                clamp01((0.072 + 0.95 * wave + 0.30 * hot + 1.12 * cold) * shade)
+            )
+        }
+
+        if palette == .metallicDreams || palette == .guilloche {
+            let exponent = palette == .guilloche
+                ? 48.0 + 24.0 * structure
+                : 23.0 - 8.0 * complexity
+            let ink = exp(-exponent * sqrt(max(closest, 0.0)))
+            let weave = 0.5 + 0.5 * cos(
+                0.44 * Double(closestIteration)
+                    + 30.0 * pow(max(closest, 1e-8), 0.24)
+            )
+            let line = pow(
+                clamp01(ink),
+                palette == .guilloche ? 2.5 : 2.1
+            )
+            let shade = iteration == maxIterations ? 0.52 : 1.0
+            if palette == .guilloche {
+                return (
+                    clamp01((0.022 + 0.80 * line * weave) * shade),
+                    clamp01((0.032 + 0.62 * line * weave) * shade),
+                    clamp01((0.044 + 0.34 * line * weave) * shade)
+                )
+            }
+            let highlight = pow(line * weave, 3.0)
+            return (
+                clamp01((0.008 + 0.72 * line + 0.50 * highlight) * shade),
+                clamp01((0.0035 + 0.30 * line + 0.44 * highlight) * shade),
+                clamp01((0.0015 + 0.075 * line + 0.32 * highlight) * shade)
+            )
+        }
+
+        let radial = max(hypot(localX, localY), 1e-8)
+        let nx = localX / radial
+        let ny = localY / radial
+        let nz = sqrt(
+            max(
+                1.0 - pow(clamp01(closest / trapRadius), 2.0),
+                0.0
+            )
+        )
+        let diffuse = clamp01(nx * -0.44 + ny * 0.33 + nz * 0.83)
+        let lens = exp(-(20.0 + 22.0 * structure) * closest)
+        let rim = pow(clamp01(1.0 - nz), 1.55)
+        let phase = 0.5 + 0.5 * cos(
+            0.52 * Double(closestIteration) + 18.0 * closest
+        )
+        let overlap = palette == .quantumTraps
+            ? exp(
+                -(34.0 - 16.0 * structure) * abs(second - closest)
+            ) * lens
+            : 0.0
+        let hotSource = palette == .quantumGlass ? lens : overlap
+        let hot = pow(hotSource * phase, 2.4)
+        let cold = pow(lens * (1.0 - phase), 2.0)
+        let shade = iteration == maxIterations ? 0.52 : 1.0
+        return (
+            clamp01((0.008 + 0.10 * lens * diffuse + 0.34 * rim + hot + 0.18 * cold) * shade),
+            clamp01((0.014 + 0.28 * lens * diffuse + 0.48 * rim + 0.58 * hot + 0.62 * cold) * shade),
+            clamp01((0.032 + 0.48 * lens * diffuse + 0.70 * rim + 0.20 * hot + 0.92 * cold) * shade)
+        )
+    }
+}
+
+nonisolated private func iosEmbossedMetalColor(
+    center: Int,
+    right: Int,
+    down: Int,
+    reliefStrength: Double,
+    maxIterations: Int
+) -> (r: Double, g: Double, b: Double) {
+    let denominator = Double(max(maxIterations, 1))
+    let height = sqrt(Double(center) / denominator)
+    let relief = 12.0 + 60.0 * clamp01(reliefStrength)
+    let dx = (sqrt(Double(right) / denominator) - height) * relief
+    let dy = (sqrt(Double(down) / denominator) - height) * relief
+    let length = sqrt(dx * dx + dy * dy + 1.0)
+    let diffuse = clamp01(
+        dx / length * 0.48 - dy / length * 0.40 + 0.78 / length
+    )
+    let rim = pow(clamp01(1.0 - 1.0 / length), 1.35)
+    let contour = pow(
+        0.5 + 0.5 * cos(52.0 * sqrt(max(height, 0.0))),
+        7.0
+    )
+    let shade = center == maxIterations ? 0.28 : 1.0
+    return (
+        clamp01(((0.10 + 0.62 * height) * (0.18 + 0.82 * diffuse) + 0.48 * rim + 0.32 * contour) * shade),
+        clamp01(((0.105 + 0.47 * height) * (0.18 + 0.82 * diffuse) + 0.36 * rim + 0.24 * contour) * shade),
+        clamp01(((0.11 + 0.29 * height) * (0.18 + 0.82 * diffuse) + 0.22 * rim + 0.15 * contour) * shade)
+    )
+}
+
 nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
     width: Int,
     height: Int,
@@ -4110,6 +4314,9 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
     palette: FractalPalette,
     preciseViewport: PreciseViewport,
     maxIterations: Int,
+    doodadsStructure: Double,
+    doodadsComplexity: Double,
+    doodadsCurl: Double,
     viewportAspectRatio: Double,
     automaticIterationsEnabled: Bool = false,
     iterationTargetCallback: (@Sendable (Int) -> Void)? = nil,
@@ -4202,19 +4409,77 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
                 let horizontalOffset =
                     ((Double(px) + 0.5) / pixelWidth - 0.5)
                     * viewportAspectRatio
-                let iteration = TripleDoublePerturbation.acceleratedIterationWithLocalRebase(
+                let orbitArt: IOSDeepOrbitArtAccumulator? = switch palette {
+                case .metallicDreams, .guilloche, .spheroidGlass,
+                     .quantumTraps, .orbitalWaves, .quantumGlass:
+                    IOSDeepOrbitArtAccumulator(
+                        palette: palette,
+                        structure: doodadsStructure,
+                        complexity: doodadsComplexity,
+                        curl: doodadsCurl
+                    )
+                default:
+                    nil
+                }
+                let iterationResult =
+                    TripleDoublePerturbation.acceleratedIterationWithLocalRebase(
                     horizontalOffset: horizontalOffset,
                     verticalOffset: verticalOffset,
                     scale: projectedScale,
                     references: references,
                     approximations: seriesApproximations,
-                    maxIterations: automaticTarget
-                ).iteration
+                    maxIterations: automaticTarget,
+                    orbitObserver: orbitArt.map { accumulator in
+                        { iteration, x, y in
+                            accumulator.observe(
+                                iteration: iteration,
+                                x: x,
+                                y: y
+                            )
+                        }
+                    }
+                )
+                let iteration = iterationResult.iteration
                 let normalizedX = (Double(px) + 0.5) / pixelWidth
                 let normalizedY = (Double(py) + 0.5) / pixelHeight
                 let color: (r: Double, g: Double, b: Double)
 
-                if iteration == automaticTarget {
+                if let artColor = orbitArt?.color(
+                    iteration: iteration,
+                    maxIterations: automaticTarget
+                ) {
+                    color = artColor
+                } else if palette == .embossedMetal {
+                    let right =
+                        TripleDoublePerturbation
+                            .acceleratedIterationWithLocalRebase(
+                                horizontalOffset: horizontalOffset
+                                    + viewportAspectRatio / pixelWidth,
+                                verticalOffset: verticalOffset,
+                                scale: projectedScale,
+                                references: references,
+                                approximations: seriesApproximations,
+                                maxIterations: automaticTarget
+                            ).iteration
+                    let down =
+                        TripleDoublePerturbation
+                            .acceleratedIterationWithLocalRebase(
+                                horizontalOffset: horizontalOffset,
+                                verticalOffset: verticalOffset
+                                    + 1.0 / pixelHeight,
+                                scale: projectedScale,
+                                references: references,
+                                approximations: seriesApproximations,
+                                maxIterations: automaticTarget
+                            ).iteration
+                    color = iosEmbossedMetalColor(
+                        center: iteration,
+                        right: right,
+                        down: down,
+                        reliefStrength: doodadsStructure,
+                        maxIterations: automaticTarget
+                    )
+                } else if iteration == automaticTarget {
                     if palette == .motherOfPearl {
                         color = motherOfPearlInteriorColor(
                             normalizedX: normalizedX,
@@ -4305,6 +4570,9 @@ nonisolated func renderFractal(
             palette: palette,
             preciseViewport: preciseViewport,
             maxIterations: maxIterations,
+            doodadsStructure: doodadsStructure,
+            doodadsComplexity: doodadsComplexity,
+            doodadsCurl: doodadsCurl,
             viewportAspectRatio: aspectRatio,
             automaticIterationsEnabled: automaticIterationsEnabled,
             iterationTargetCallback: iterationTargetCallback,
