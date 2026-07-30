@@ -33,7 +33,7 @@ private let tripleDoublePreviewMaxPixelHeight: Int = 720
 private let deepCPUPreviewScaleLimit: Double = 0.00001
 private let deepCPUPreviewMaxPixelWidth: Int = 720
 private let deepCPUPreviewMaxPixelHeight: Int = 480
-private let deepCPUPreviewIterationCap: Int = 2_500
+nonisolated private let deepCPUPreviewIterationCap: Int = 2_500
 private let refinementDebounceNanoseconds: UInt64 = 220_000_000
 
 #if os(iOS)
@@ -4409,18 +4409,22 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
                 let horizontalOffset =
                     ((Double(px) + 0.5) / pixelWidth - 0.5)
                     * viewportAspectRatio
-                let orbitArt: IOSDeepOrbitArtAccumulator? = switch palette {
-                case .metallicDreams, .guilloche, .spheroidGlass,
-                     .quantumTraps, .orbitalWaves, .quantumGlass:
-                    IOSDeepOrbitArtAccumulator(
-                        palette: palette,
-                        structure: doodadsStructure,
-                        complexity: doodadsComplexity,
-                        curl: doodadsCurl
-                    )
-                default:
-                    nil
-                }
+                let supportsStableOrbitArt = abs(projectedScale) >= 1e-15
+                let orbitArt: IOSDeepOrbitArtAccumulator? = {
+                    guard supportsStableOrbitArt else { return nil }
+                    return switch palette {
+                    case .metallicDreams, .guilloche, .spheroidGlass,
+                         .quantumTraps, .orbitalWaves, .quantumGlass:
+                        IOSDeepOrbitArtAccumulator(
+                            palette: palette,
+                            structure: doodadsStructure,
+                            complexity: doodadsComplexity,
+                            curl: doodadsCurl
+                        )
+                    default:
+                        nil
+                    }
+                }()
                 let iterationResult =
                     TripleDoublePerturbation.acceleratedIterationWithLocalRebase(
                     horizontalOffset: horizontalOffset,
@@ -4429,6 +4433,9 @@ nonisolated private func renderMandelbrotTripleDoubleParallel(
                     references: references,
                     approximations: seriesApproximations,
                     maxIterations: automaticTarget,
+                    orbitObservationLimit: orbitArt == nil
+                        ? nil
+                        : deepCPUPreviewIterationCap,
                     orbitObserver: orbitArt.map { accumulator in
                         { iteration, x, y in
                             accumulator.observe(
