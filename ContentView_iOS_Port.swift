@@ -4191,6 +4191,9 @@ nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
     preciseViewport: PreciseViewport,
     maxIterations: Int,
     viewportAspectRatio: Double,
+    doodadsStructure: Double,
+    doodadsComplexity: Double,
+    doodadsCurl: Double,
     progressCallback: (@Sendable (Double) -> Void)? = nil
 ) -> CGImage? {
     let bytesPerPixel = 4
@@ -4230,11 +4233,36 @@ nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
                 let x0 = preciseViewport.centerX
                     + preciseViewport.scale * horizontalOffset
 
+                func makeOrbitArt() -> IOSDeepOrbitArtAccumulator? {
+                    switch palette {
+                    case .metallicDreams, .guilloche, .spheroidGlass,
+                         .quantumTraps, .orbitalWaves, .quantumGlass:
+                        IOSDeepOrbitArtAccumulator(
+                            palette: palette,
+                            structure: doodadsStructure,
+                            complexity: doodadsComplexity,
+                            curl: doodadsCurl
+                        )
+                    default:
+                        nil
+                    }
+                }
+
                 var localMaxIterations = maxIterations
+                var orbitArt = makeOrbitArt()
                 var iteration = calculateMandelbrotIterationDoubleDouble(
                     cX: x0.doubleDoubleValue,
                     cY: y0.doubleDoubleValue,
-                    maxIterations: localMaxIterations
+                    maxIterations: localMaxIterations,
+                    orbitObserver: orbitArt.map { accumulator in
+                        { iteration, x, y in
+                            accumulator.observe(
+                                iteration: iteration,
+                                x: x,
+                                y: y
+                            )
+                        }
+                    }
                 )
 
                 if shouldApplyAdaptiveIterationRefinement(
@@ -4244,16 +4272,31 @@ nonisolated private func renderDirectMandelbrotDoubleDoubleParallel(
                     iteration: iteration
                 ) {
                     localMaxIterations = min(maxIterations + maxIterations / 2, 120_000)
+                    orbitArt = makeOrbitArt()
                     iteration = calculateMandelbrotIterationDoubleDouble(
                         cX: x0.doubleDoubleValue,
                         cY: y0.doubleDoubleValue,
-                        maxIterations: localMaxIterations
+                        maxIterations: localMaxIterations,
+                        orbitObserver: orbitArt.map { accumulator in
+                            { iteration, x, y in
+                                accumulator.observe(
+                                    iteration: iteration,
+                                    x: x,
+                                    y: y
+                                )
+                            }
+                        }
                     )
                 }
 
                 let color: (r: Double, g: Double, b: Double)
 
-                if iteration == localMaxIterations {
+                if let artColor = orbitArt?.color(
+                    iteration: iteration,
+                    maxIterations: localMaxIterations
+                ) {
+                    color = artColor
+                } else if iteration == localMaxIterations {
                     if palette == .motherOfPearl {
                         color = motherOfPearlInteriorColor(normalizedX: (Double(px) + 0.5) / Double(width), normalizedY: (Double(py) + 0.5) / Double(height))
                     } else if palette == .pearl {
@@ -4597,6 +4640,9 @@ nonisolated func renderFractal(
             preciseViewport: preciseViewport,
             maxIterations: maxIterations,
             viewportAspectRatio: aspectRatio,
+            doodadsStructure: doodadsStructure,
+            doodadsComplexity: doodadsComplexity,
+            doodadsCurl: doodadsCurl,
             progressCallback: progressCallback
         )
     }
@@ -5517,7 +5563,6 @@ nonisolated private func abstractTrapColor(
     var zy = mode == .julia ? y0 : 0.0
     let cx = mode == .julia ? -0.8 : x0
     let cy = mode == .julia ? 0.156 : y0
-    let exponent = mode.powerExponent ?? 2
     let separation = 0.08 + 0.24 * clamp01(structure)
     let traps = palette == .spheroidGlass || palette == .quantumGlass
         ? [(0.0, 0.0, 0.24 + 0.18 * clamp01(structure))]
@@ -5532,17 +5577,68 @@ nonisolated private func abstractTrapColor(
     var iteration = 0
 
     while iteration < maxIterations {
-        var powerX = zx
-        var powerY = zy
-        if exponent > 1 {
+        switch mode {
+        case .celtic:
+            let realSquared = zx * zx - zy * zy
+            let imaginarySquared = 2.0 * zx * zy
+            zx = abs(realSquared) + cx
+            zy = imaginarySquared + cy
+
+        case .burningShip:
+            let ax = abs(zx)
+            let ay = abs(zy)
+            let nextX = ax * ax - ay * ay + cx
+            zy = 2.0 * ax * ay + cy
+            zx = nextX
+
+        case .tricorn:
+            let nextX = zx * zx - zy * zy + cx
+            zy = -2.0 * zx * zy + cy
+            zx = nextX
+
+        case .eightRainbows:
+            let x2 = zx * zx - zy * zy
+            let y2 = 2.0 * zx * zy
+            let x4 = x2 * x2 - y2 * y2
+            let y4 = 2.0 * x2 * y2
+            zx = x4 * x4 - y4 * y4 + cx
+            zy = 2.0 * x4 * y4 + cy
+
+        case .power2, .power3, .power4, .power5, .power6, .power7,
+             .power8, .power9, .power10, .power11, .power12:
+            let exponent = mode.powerExponent!
+            let baseX = zx
+            let baseY = zy
+            var powerX = zx
+            var powerY = zy
             for _ in 1..<exponent {
-                let nextX = powerX * zx - powerY * zy
-                powerY = powerX * zy + powerY * zx
+                let nextX = powerX * baseX - powerY * baseY
+                powerY = powerX * baseY + powerY * baseX
                 powerX = nextX
             }
+            zx = powerX + cx
+            zy = powerY + cy
+
+        case .kleinian:
+            let r2 = zx * zx + zy * zy + 0.000001
+            zx /= r2
+            zy /= r2
+            zx = abs(zx) - 1.0
+            zy = abs(zy) - 0.5
+            let angle = 0.45
+            let cosA = cos(angle)
+            let sinA = sin(angle)
+            let rotatedX = zx * cosA - zy * sinA
+            let rotatedY = zx * sinA + zy * cosA
+            zx = rotatedX
+            zy = rotatedY
+
+        case .mandelbrot, .julia, .mandelbrotRelief, .mandelbrotPlateau,
+             .mandelbulb3D, .mandelbox3D, .newton:
+            let nextX = zx * zx - zy * zy + cx
+            zy = 2.0 * zx * zy + cy
+            zx = nextX
         }
-        zx = powerX + cx
-        zy = powerY + cy
 
         if palette == .orbitalWaves {
             let orbitRadius = max(hypot(zx, zy), 1e-8)
