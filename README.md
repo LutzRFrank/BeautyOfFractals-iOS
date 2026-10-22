@@ -6,7 +6,7 @@ display, with adaptive native bars, settings popovers, and safe-area-aware label
 offers natural touch navigation, Metal rendering, precise CPU deep zooms, PNG
 export, and a compact Apple Watch companion.
 
-## Version 2.30 (build 4)
+## Version 2.30 (build 75)
 
 Native action bars and two settings popovers replace the floating control drawer:
 
