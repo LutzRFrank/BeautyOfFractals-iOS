@@ -1360,10 +1360,12 @@ struct ContentView: View {
             GeometryReader { proxy in
                 #if os(iOS)
                 if isPhoneDevice {
+                    // An opened phone can offer a tablet-sized canvas. Choose the
+                    // drawer's density and width from the available space.
                     controlsDrawer(isCompact: proxy.size.width < 600)
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, proxy.safeAreaInsets.bottom + 8)
-                        .frame(maxWidth: 360)
+                        .padding(.horizontal, proxy.size.width < 600 ? 10 : 40)
+                        .padding(.bottom, 8)
+                        .frame(maxWidth: proxy.size.width < 600 ? 360 : 980)
                         .frame(
                             maxWidth: .infinity,
                             maxHeight: .infinity,
@@ -2462,14 +2464,6 @@ struct MandelbrotView: View {
     }
     #endif
 
-    private func topInfoPadding(viewWidth: CGFloat, safeTop: CGFloat) -> CGFloat {
-        #if os(iOS)
-        return viewWidth < 600 ? 96 : 36
-        #else
-        return safeTop + 12
-        #endif
-    }
-
     var body: some View {
         GeometryReader { geometry in
             let viewportAspectRatio = Double(max(geometry.size.width, 1)) / Double(max(geometry.size.height, 1))
@@ -2652,11 +2646,24 @@ struct MandelbrotView: View {
                             .padding(.horizontal, 10).padding(.vertical, 6).background(.ultraThinMaterial).clipShape(Capsule())
                     }
                 }
-                .padding(.top, topInfoPadding(viewWidth: geometry.size.width, safeTop: geometry.safeAreaInsets.top))
-                .padding(.horizontal, 18)
+                // The canvas is full bleed, but status labels must avoid system
+                // UI on every edge, including Duo's side status bar.
+                .padding(.top, geometry.safeAreaInsets.top + 12)
+                .padding(.leading, geometry.safeAreaInsets.leading + 18)
+                .padding(.trailing, geometry.safeAreaInsets.trailing + 18)
 
             }
             .contentShape(Rectangle())
+            .onChange(of: geometry.size) {
+                // A fold or window resize invalidates in-progress selection and
+                // pinch coordinates, while preserving the fractal viewport.
+                resetDragState()
+                touchPanActive = false
+                pinchStartViewport = nil
+                if isInteractionPreviewActive {
+                    finishInteractionPreview()
+                }
+            }
             .onChange(of: navigationRevision) {
                 highPrecisionRenderEpoch &+= 1
                 isHighPrecisionRenderCancelled = false
