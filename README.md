@@ -1,28 +1,27 @@
 # Beauty of Fractals for iPhone, iPad, and Apple Watch
 
 Beauty of Fractals is an interactive Mandelbrot and fractal explorer for iPhone
-and iPad. Version 2.20 introduces initial support for the fully opened iPhone Duo
-display, with adaptive controls and safe-area-aware status labels. The app also
+and iPad. Version 2.30 includes support for the fully opened iPhone Duo
+display, with adaptive native bars, settings popovers, and safe-area-aware labels. The app also
 offers natural touch navigation, Metal rendering, precise CPU deep zooms, PNG
 export, and a compact Apple Watch companion.
 
-## Version 2.20 (build 3)
+## Version 2.30 (build 4)
 
-Version 2.20 adds initial support for the fully opened iPhone Duo display:
+Native action bars and two settings popovers replace the floating control drawer:
 
-- The collapsible phone controls expand with the available window width.
-- Zoom and status labels respect the display's safe-area insets.
-- Window resizing clears transient gesture state while preserving the fractal
-  center and zoom.
-- Metal and high-precision previews use the current view size and aspect ratio.
+- Fractal, Skin & Quality provides mode, palette, quality, and power selection.
+- Iterations & Effects provides the iteration budget, plateau tilt, and relevant
+  skin controls, including Glass and the Metallic Dreams controls.
+- Undo, zoom, Reset, favorites, help, render status, and export remain available.
+- Supported iPhone Duo layouts adapt the bars to the display edge.
+- Zoom/status labels respect system safe areas. Metal previews and CPU deep zooms
+  both provide a render-status view.
 
-This first compatibility pass targets the fully opened display. Dedicated
-partially folded layouts are not included. Visual simulator checks covered
-portrait and opened landscape; fold transitions and physical-device interaction
-still need validation before submission.
+The owner checked the new UI on iPhone and Duo before this shared version bump.
+Dedicated partially folded layouts remain outside the advertised scope.
 
-Release metadata and localized copy are maintained in the parent repository at
-`AppStore/iOS-2.20-Release.md`.
+Release texts and handoff: `AppStore/Release-2.30.md` in the parent repository.
 
 ## Deep-zoom features
 

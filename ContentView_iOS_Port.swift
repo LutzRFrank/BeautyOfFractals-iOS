@@ -1109,6 +1109,8 @@ struct ContentView: View {
     @State private var isSavingSnapshot: Bool = false
     @State private var exportStartDate: Date?
     @State private var exportStatusText: String?
+    @State private var iterationInput = ""
+    @FocusState private var iterationFieldFocused: Bool
     @State private var showHelp: Bool = false
     @State private var renderStatusPanelVisible: Bool = false
     @State private var renderStatusPanelPinned: Bool = false
@@ -1143,7 +1145,8 @@ struct ContentView: View {
     #if os(iOS)
     @State private var exportURL: URL?
     @State private var showExportPicker = false
-    @State private var controlsAreCollapsed = false
+    @State private var showSelectionPopover = false
+    @State private var showRenderingPopover = false
     #endif
     
     private var effectiveIterations: Int {
@@ -1238,94 +1241,254 @@ struct ContentView: View {
         exportStatusText = nil
     }
     
+    var body: some View {
+        #if os(iOS)
+        NavigationStack {
+            explorerContent
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { explorerToolbar }
+        }
+        #else
+        explorerContent
+        #endif
+    }
+
     #if os(iOS)
-    private func showControls() {
-        guard isPhoneDevice else { return }
-
-        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
-            controlsAreCollapsed = false
-        }
-    }
-
-    private func hideControls() {
-        guard isPhoneDevice else { return }
-
-        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
-            controlsAreCollapsed = true
-        }
-    }
-
-    private var controlsHandle: some View {
-        Capsule()
-            .fill(.white.opacity(0.64))
-            .frame(width: 34, height: 5)
-            .frame(width: 68, height: 28)
-            .background {
-                Capsule()
-                    .fill(.black.opacity(0.28))
-                    .background {
-            Capsule()
-                .fill(.white.opacity(0.16))
-            .background(Color.clear, in: Capsule())
-        }
+    @ToolbarContentBuilder
+    private var explorerToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                showFavoritesPanel = true
+            } label: {
+                Label("Favorite Spots", systemImage: "star")
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                controlsAreCollapsed ? showControls() : hideControls()
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                showHelp = true
+            } label: {
+                Label("Help", systemImage: "questionmark.circle")
             }
-            .gesture(
-                DragGesture(minimumDistance: 3)
-                    .onEnded { value in
-                        if value.translation.height > 18 {
-                            hideControls()
-                        } else if value.translation.height < -12 {
-                            showControls()
-                        }
-                    }
-            )
-            .accessibilityLabel(
-                controlsAreCollapsed ? "Show controls" : "Hide controls"
-            )
-    }
-
-    private func controlsDrawer(isCompact: Bool) -> some View {
-        VStack(spacing: 0) {
-            if controlsAreCollapsed {
-                controlsHandle
-            } else {
-                controlsOverlay(
-                    isCompact: isCompact,
-                    topInset: isCompact ? 28 : 32
-                )
-                .overlay(alignment: .top) {
-                    controlsHandle
-                        .padding(.top, 3)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                if renderStatusPanelIsDisplayed {
+                    renderStatusPanelPinned = false
+                    renderStatusPanelVisible = false
+                    renderStatusPanelManuallyHidden = true
+                } else {
+                    renderStatusPanelPinned = false
+                    renderStatusPanelVisible = true
+                    renderStatusPanelManuallyHidden = false
+                    renderStatusPanelTemporaryShowID &+= 1
                 }
-                .transition(
-                    .move(edge: .bottom)
-                        .combined(with: .opacity)
+            } label: {
+                Label(
+                    renderStatusPanelIsDisplayed ? "Hide render status" : "Show render status",
+                    systemImage: "gauge"
                 )
             }
         }
-        .animation(
-            .spring(response: 0.30, dampingFraction: 0.84),
-            value: controlsAreCollapsed
-        )
-        .onChange(of: maxIterations) {
-            showControls()
+
+        // Native placements let iOS adapt the same actions to horizontal or
+        // vertical bars. Settings appear only when their popover is opened.
+        ToolbarItem(placement: .bottomBar) {
+            Button(action: undoView) {
+                Label("Undo last zoom or pan", systemImage: "arrow.uturn.backward")
+            }
+            .disabled(navigationHistory.isEmpty)
         }
-        .onChange(of: fractalPalette) {
-            showControls()
+        ToolbarItem(placement: .bottomBar) {
+            Button(action: zoomOut) {
+                Label("Zoom out", systemImage: "minus.magnifyingglass")
+            }
         }
-        .onChange(of: renderQuality) {
-            showControls()
+        ToolbarItem(placement: .bottomBar) {
+            Button(action: zoomIn) {
+                Label("Zoom in", systemImage: "plus.magnifyingglass")
+            }
+        }
+        ToolbarItem(placement: .bottomBar) {
+            Button(action: resetView) {
+                Label("Reset view", systemImage: "arrow.counterclockwise")
+            }
+        }
+        ToolbarItem(placement: .bottomBar) {
+            Button {
+                showRenderingPopover = false
+                showSelectionPopover.toggle()
+            } label: {
+                Label("Fractal, skin & quality", systemImage: "line.3.horizontal.decrease")
+            }
+            .popover(isPresented: $showSelectionPopover) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Fractal, Skin & Quality")
+                        .font(.headline)
+                    selectionMenus
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .padding(20)
+                .frame(width: 300)
+                .presentationCompactAdaptation(.popover)
+            }
+        }
+        ToolbarItem(placement: .bottomBar) {
+            Button {
+                showSelectionPopover = false
+                showRenderingPopover.toggle()
+            } label: {
+                Label("Iterations & effects", systemImage: "slider.horizontal.3")
+            }
+            .popover(isPresented: $showRenderingPopover) {
+                renderingPopover
+                    .presentationCompactAdaptation(.popover)
+            }
+        }
+        ToolbarItem(placement: .bottomBar) {
+            Menu {
+                Button {
+                    showExportPicker = true
+                } label: {
+                    Label("Export image…", systemImage: "square.and.arrow.up")
+                }
+                if let exportURL {
+                    ShareLink(item: exportURL) {
+                        Label("Share last export", systemImage: "paperplane")
+                    }
+                }
+            } label: {
+                Label(
+                    isSavingSnapshot ? "Rendering…" : "Export image",
+                    systemImage: isSavingSnapshot ? "hourglass" : "square.and.arrow.up"
+                )
+            }
+            .disabled(isSavingSnapshot)
+        }
+    }
+
+    private var renderingPopoverHeight: CGFloat {
+        let effectHeight: CGFloat
+        switch fractalPalette {
+        case .metallicDreams: effectHeight = 210
+        case .embossedMetal, .guilloche, .spheroidGlass, .quantumGlass,
+             .quantumTraps, .orbitalWaves: effectHeight = 70
+        default: effectHeight = 0
+        }
+        return min(480, 200 + effectHeight + (fractalMode == .mandelbrotPlateau ? 100 : 0))
+    }
+
+    private func commitIterationInput() {
+        if let value = Int(iterationInput.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            clearExportStatus()
+            maxIterations = min(max(value, 300), maximumBaseIterations)
+        }
+        iterationInput = String(maxIterations)
+    }
+
+    private var iterationBudgetEditor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Iterations")
+                Spacer()
+                TextField("Iterations", text: $iterationInput)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .frame(width: 100)
+                    .focused($iterationFieldFocused)
+                    .keyboardType(.numbersAndPunctuation)
+                    .submitLabel(.done)
+                    .onSubmit {
+                        commitIterationInput()
+                        iterationFieldFocused = false
+                    }
+                    .accessibilityLabel("Iteration budget")
+            }
+            if (automaticDisplayedIterations ?? effectiveIterations) != maxIterations {
+                Text("Render budget: \((automaticDisplayedIterations ?? effectiveIterations).formatted())")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { iterationInput = String(maxIterations) }
+        .onChange(of: maxIterations) { iterationInput = String(maxIterations) }
+        .onChange(of: iterationFieldFocused) {
+            if !iterationFieldFocused { commitIterationInput() }
+        }
+        .onDisappear { commitIterationInput() }
+    }
+
+    private var renderingPopover: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Iterations & Effects")
+                    .font(.headline)
+
+                iterationBudgetEditor
+                Slider(
+                    value: Binding(
+                        get: { Double(maxIterations) },
+                        set: {
+                            clearExportStatus()
+                            maxIterations = Int(($0 / 100).rounded()) * 100
+                        }
+                    ),
+                    in: 300...Double(maximumBaseIterations)
+                )
+                .accessibilityLabel("Iterations")
+                if fractalMode == .mandelbrotPlateau {
+                    Divider()
+                    Text("Tilt \(Int(plateauTiltDegrees.rounded()))°")
+                        .monospacedDigit()
+                    Slider(value: $plateauTiltDegrees, in: 80...90, step: 1)
+                        .accessibilityLabel("Plateau tilt")
+                }
+
+                if fractalPalette == .metallicDreams {
+                    effectSlider("Structure", value: $doodadsStructure)
+                    effectSlider("Complexity", value: $doodadsComplexity)
+                    effectSlider("Curl", value: $doodadsCurl)
+                } else if fractalPalette == .embossedMetal {
+                    effectSlider("Relief", value: $embossedRelief)
+                } else if fractalPalette == .guilloche {
+                    effectSlider("Engraving", value: $guillocheEngraving)
+                } else if fractalPalette == .spheroidGlass || fractalPalette == .quantumGlass {
+                    effectSlider("Glass", value: $spheroidGlass)
+                } else if fractalPalette == .quantumTraps {
+                    effectSlider("Interference", value: $quantumInterference)
+                } else if fractalPalette == .orbitalWaves {
+                    effectSlider("Waves", value: $orbitalWaves)
+                }
+            }
+            .padding(20)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: 300)
+        .frame(idealHeight: renderingPopoverHeight, maxHeight: renderingPopoverHeight)
+    }
+
+    private func effectSlider(_ title: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+            Slider(value: value, in: 0...1)
+                .accessibilityLabel(title)
         }
     }
     #endif
 
-    var body: some View {
+    private var explorerContent: some View {
+        GeometryReader { safeGeometry in
+            explorerCanvas(safeAreaInsets: safeGeometry.safeAreaInsets)
+        }
+    }
+
+    private func explorerCanvas(safeAreaInsets: EdgeInsets) -> some View {
         ZStack(alignment: .bottom) {
             MandelbrotView(
+                overlaySafeAreaInsets: safeAreaInsets,
                 fractalMode: fractalMode,
                 fractalPalette: fractalPalette,
                 centerX: $centerX,
@@ -1357,44 +1520,15 @@ struct ContentView: View {
             #endif
             .ignoresSafeArea()
             
+            #if os(macOS)
             GeometryReader { proxy in
-                #if os(iOS)
-                if isPhoneDevice {
-                    // An opened phone can offer a tablet-sized canvas. Choose the
-                    // drawer's density and width from the available space.
-                    controlsDrawer(isCompact: proxy.size.width < 600)
-                        .padding(.horizontal, proxy.size.width < 600 ? 10 : 40)
-                        .padding(.bottom, 8)
-                        .frame(maxWidth: proxy.size.width < 600 ? 360 : 980)
-                        .frame(
-                            maxWidth: .infinity,
-                            maxHeight: .infinity,
-                            alignment: .bottom
-                        )
-                } else {
-                    controlsOverlay(isCompact: proxy.size.width < 600)
-                        .padding(.horizontal, proxy.size.width < 600 ? 10 : 40)
-                        .padding(.bottom, proxy.safeAreaInsets.bottom + (proxy.size.width < 600 ? 10 : 18))
-                        .frame(maxWidth: proxy.size.width < 600 ? 360 : 980)
-                        .frame(
-                            maxWidth: .infinity,
-                            maxHeight: .infinity,
-                            alignment: .bottom
-                        )
-                }
-                #else
                 controlsOverlay(isCompact: proxy.size.width < 600)
                     .padding(.horizontal, proxy.size.width < 600 ? 10 : 40)
                     .padding(.bottom, proxy.safeAreaInsets.bottom + (proxy.size.width < 600 ? 10 : 18))
                     .frame(maxWidth: proxy.size.width < 600 ? 360 : 980)
-                    .frame(
-                        maxWidth: .infinity,
-                        maxHeight: .infinity,
-                        alignment: .bottom
-                    )
-                #endif
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
-            .allowsHitTesting(true)
+            #endif
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
@@ -1530,7 +1664,7 @@ The zoom overlay is visible only in the app and is not included in exports.
             .presentationDetents([.medium, .large])
         }
     }
-    
+
     private var preciseMagnificationFactor: Double? {
         let preciseScale = preciseViewport.scale.hi + preciseViewport.scale.lo
         let scaleMagnitude = abs(preciseScale)
@@ -1606,6 +1740,94 @@ The zoom overlay is visible only in the app and is not included in exports.
         }
     }
 
+    @ViewBuilder
+    private var selectionMenus: some View {
+        Menu {
+            modeMenuButton(.mandelbrot)
+            modeMenuButton(.power4)
+            modeMenuButton(.celtic)
+            modeMenuButton(.julia)
+            modeMenuButton(.eightRainbows)
+
+            Divider()
+
+            modeMenuButton(.burningShip)
+            modeMenuButton(.tricorn)
+            modeMenuButton(.kleinian)
+            modeMenuButton(.mandelbrotRelief)
+            modeMenuButton(.mandelbrotPlateau)
+
+            Divider()
+
+            modeMenuButton(.mandelbulb3D)
+            modeMenuButton(.mandelbox3D)
+
+            Divider()
+
+            modeMenuButton(.newton)
+        } label: {
+            Text(fractalMode.shortName)
+                .lineLimit(1)
+        }
+
+        if let exponent = fractalMode.powerExponent {
+            HStack(spacing: 3) {
+                Button {
+                    clearExportStatus()
+                    fractalMode = .power(exponent - 1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(exponent <= 2)
+                .accessibilityLabel("Decrease power")
+
+                Text("\(exponent)")
+                    .monospacedDigit()
+                    .frame(minWidth: 20)
+                    .accessibilityLabel("Power \(exponent)")
+
+                Button {
+                    clearExportStatus()
+                    fractalMode = .power(exponent + 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(exponent >= 12)
+                .accessibilityLabel("Increase power")
+            }
+            .font(.system(size: 15, weight: .semibold))
+        }
+
+        Menu {
+            ForEach(FractalPalette.allCases) { palette in
+                Button {
+                    clearExportStatus()
+                    fractalPalette = palette
+                } label: {
+                    Text("\(fractalPalette == palette ? "✓ " : "   ")\(palette.displayName)")
+                }
+            }
+        } label: {
+            Text(fractalPalette.displayName)
+                .lineLimit(1)
+        }
+
+        Menu {
+            ForEach(RenderQuality.allCases) { quality in
+                Button {
+                    clearExportStatus()
+                    renderQuality = quality
+                    maxIterations = min(maxIterations, maximumBaseIterations)
+                } label: {
+                    Text("\(renderQuality == quality ? "✓ " : "   ")\(quality.rawValue)")
+                }
+            }
+        } label: {
+            Text(renderQuality.rawValue)
+                .lineLimit(1)
+        }
+    }
+
     private func controlsOverlay(
         isCompact: Bool,
         topInset: CGFloat = 0
@@ -1613,91 +1835,9 @@ The zoom overlay is visible only in the app and is not included in exports.
         VStack(spacing: isCompact ? 5 : 7) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: isCompact ? 6 : 8) {
-                    Menu {
-                        modeMenuButton(.mandelbrot)
-                        modeMenuButton(.power4)
-                        modeMenuButton(.celtic)
-                        modeMenuButton(.julia)
-                        modeMenuButton(.eightRainbows)
+                    selectionMenus
 
-                        Divider()
-
-                        modeMenuButton(.burningShip)
-                        modeMenuButton(.tricorn)
-                        modeMenuButton(.kleinian)
-                        modeMenuButton(.mandelbrotRelief)
-                        modeMenuButton(.mandelbrotPlateau)
-
-                        Divider()
-
-                        modeMenuButton(.mandelbulb3D)
-                        modeMenuButton(.mandelbox3D)
-
-                        Divider()
-
-                        modeMenuButton(.newton)
-                    } label: {
-                        Text(fractalMode.shortName)
-                            .lineLimit(1)
-                    }
-
-                    if let exponent = fractalMode.powerExponent {
-                        HStack(spacing: 3) {
-                            Button {
-                                clearExportStatus()
-                                fractalMode = .power(exponent - 1)
-                            } label: {
-                                Image(systemName: "chevron.left")
-                            }
-                            .disabled(exponent <= 2)
-                            .accessibilityLabel("Decrease power")
-
-                            Text("\(exponent)")
-                                .monospacedDigit()
-                                .frame(minWidth: 20)
-                                .accessibilityLabel("Power \(exponent)")
-
-                            Button {
-                                clearExportStatus()
-                                fractalMode = .power(exponent + 1)
-                            } label: {
-                                Image(systemName: "chevron.right")
-                            }
-                            .disabled(exponent >= 12)
-                            .accessibilityLabel("Increase power")
-                        }
-                        .font(.system(size: isCompact ? 13 : 15, weight: .semibold))
-                    }
-                    
-                    Menu {
-                        ForEach(FractalPalette.allCases) { palette in
-                            Button {
-                                clearExportStatus()
-                                fractalPalette = palette
-                            } label: {
-                                Text("\(fractalPalette == palette ? "✓ " : "   ")\(palette.displayName)")
-                            }
-                        }
-                    } label: {
-                        Text(fractalPalette.displayName)
-                            .lineLimit(1)
-                    }
-                    
-                    Menu {
-                        ForEach(RenderQuality.allCases) { quality in
-                            Button {
-                                clearExportStatus()
-                                renderQuality = quality
-                                maxIterations = min(maxIterations, maximumBaseIterations)
-                            } label: {
-                                Text("\(renderQuality == quality ? "✓ " : "   ")\(quality.rawValue)")
-                            }
-                        }
-                    } label: {
-                        Text(renderQuality.rawValue)
-                            .lineLimit(1)
-                    }
-                    
+                    #if os(macOS)
                     Button {
                         showFavoritesPanel = true
                     } label: {
@@ -1748,20 +1888,6 @@ The zoom overlay is visible only in the app and is not included in exports.
                         Image(systemName: "arrow.counterclockwise")
                     }
                     
-                    #if os(iOS)
-                    Button {
-                        showExportPicker = true
-                    } label: {
-                        if isSavingSnapshot {
-                            Text("Rendering…")
-                                .lineLimit(1)
-                        } else {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                    }
-                    .disabled(isSavingSnapshot)
-                    .accessibilityLabel("Export image")
-                    #else
                     Menu {
                         Button("Export 1440 × 900 PNG") {
                             saveSnapshot(width: 1440, height: 900)
@@ -1800,18 +1926,15 @@ The zoom overlay is visible only in the app and is not included in exports.
                     }
                     .disabled(isSavingSnapshot)
                     #endif
-                    
-                    #if os(iOS)
-                    if let exportURL {
-                        ShareLink(item: exportURL) {
-                            Image(systemName: "paperplane")
-                        }
-                    }
-                    #endif
-                    
                 }
+                #if os(iOS)
+                .font(.subheadline)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                #else
                 .padding(.horizontal, isCompact ? 8 : 10)
                 .padding(.vertical, isCompact ? 6 : 8)
+                #endif
             }
             
             if fractalPalette == .metallicDreams {
@@ -1852,19 +1975,6 @@ The zoom overlay is visible only in the app and is not included in exports.
                     .frame(minWidth: 70, maxWidth: 150)
                 }
 
-                #if os(iOS)
-                Button {
-                    undoView()
-                } label: {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: isCompact ? 14 : 16, weight: .semibold))
-                        .frame(width: isCompact ? 30 : 34, height: isCompact ? 28 : 32)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(navigationHistory.isEmpty)
-                .accessibilityLabel("Undo last zoom or pan")
-                #endif
 
                 Text("\((automaticDisplayedIterations ?? effectiveIterations).formatted())")
                     .font(.system(isCompact ? .caption : .footnote, design: .rounded))
@@ -2325,6 +2435,7 @@ struct HighPrecisionViewportState: Equatable {
 
 
 struct MandelbrotView: View {
+    let overlaySafeAreaInsets: EdgeInsets
     let fractalMode: FractalMode
     let fractalPalette: FractalPalette
     @Binding var centerX: Double
@@ -2463,6 +2574,44 @@ struct MandelbrotView: View {
         ].joined(separator: "|")
     }
     #endif
+
+    private var liveRenderStatusPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Render Status", systemImage: "gauge")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                Button {
+                    renderStatusPanelPinned.toggle()
+                    renderStatusPanelVisible = renderStatusPanelPinned
+                } label: {
+                    Image(systemName: renderStatusPanelPinned ? "pin.fill" : "pin")
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(renderStatusPanelPinned ? "Unpin render status" : "Pin render status")
+            }
+            Label("Live preview · Metal", systemImage: "bolt.fill")
+                .font(.subheadline)
+            HStack {
+                Text("Iterations")
+                Spacer()
+                Text(metalDisplayedIterations.formatted())
+                    .monospacedDigit()
+            }
+            .font(.subheadline)
+            if let exportStatusText {
+                Text(exportStatusText == "failed" ? "Export failed" : "Export finished · \(exportStatusText)")
+                    .font(.caption)
+            }
+        }
+        .foregroundStyle(.white.opacity(0.9))
+        .padding(16)
+        .frame(width: 260)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+        .buttonStyle(.plain)
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -2628,6 +2777,18 @@ struct MandelbrotView: View {
                     #endif
                 }
 
+                // The CPU preview owns its progress panel. Metal also needs a
+                // status view so the gauge responds at ordinary zoom levels.
+                if !useHighPrecisionPreview,
+                   renderStatusPanelVisible || renderStatusPanelPinned || exportStatusText != nil {
+                    liveRenderStatusPanel
+                        .padding(.top, max(geometry.safeAreaInsets.top, overlaySafeAreaInsets.top) + 56)
+                        .padding(.leading, max(geometry.safeAreaInsets.leading, overlaySafeAreaInsets.leading) + 14)
+                        .padding(.trailing, max(geometry.safeAreaInsets.trailing, overlaySafeAreaInsets.trailing) + 14)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .zIndex(3)
+                }
+
                 if let rect = selectionRect, !isPanning {
                     Rectangle().stroke(Color.white, lineWidth: 2)
                         .background(Rectangle().fill(Color.white.opacity(0.15)))
@@ -2648,9 +2809,9 @@ struct MandelbrotView: View {
                 }
                 // The canvas is full bleed, but status labels must avoid system
                 // UI on every edge, including Duo's side status bar.
-                .padding(.top, geometry.safeAreaInsets.top + 12)
-                .padding(.leading, geometry.safeAreaInsets.leading + 18)
-                .padding(.trailing, geometry.safeAreaInsets.trailing + 18)
+                .padding(.top, max(geometry.safeAreaInsets.top, overlaySafeAreaInsets.top) + 12)
+                .padding(.leading, max(geometry.safeAreaInsets.leading, overlaySafeAreaInsets.leading) + 18)
+                .padding(.trailing, max(geometry.safeAreaInsets.trailing, overlaySafeAreaInsets.trailing) + 18)
 
             }
             .contentShape(Rectangle())

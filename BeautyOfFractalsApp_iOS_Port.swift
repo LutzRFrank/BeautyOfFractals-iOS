@@ -2,7 +2,7 @@
 //  BeautyOfFractalsApp_iOS_Port.swift
 //  BeautOfFractals
 //
-//  Created by Lutz-R. Frank on 16.06.2026.
+//  Created by Lutz-R. Frank on 16.06.2026
 //
 
 import SwiftUI
