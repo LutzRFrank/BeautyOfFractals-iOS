@@ -1532,6 +1532,16 @@ struct ContentView: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
+        .onOpenURL { url in
+            guard let event = FractalEventLink(url: url) else { return }
+            showHelp = false
+            showFavoritesPanel = false
+            showRenderingPopover = false
+            showExportPicker = false
+            showSelectionPopover = false
+            fractalPalette = .deepBlue
+            setMode(event.mode)
+        }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .exportDefaultFractal)) { _ in
             saveSnapshot(width: 2560, height: 1600)
@@ -6703,6 +6713,7 @@ private struct ExportPickerSheet: View {
 }
 
 private struct HelpSheet: View {
+    @Environment(\.locale) private var locale
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -6840,36 +6851,45 @@ private struct HelpSheet: View {
 
     private var quickStart: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Label("Quick Start", systemImage: "sparkles")
-                    .font(.system(size: 19, weight: .bold, design: .rounded))
-                Spacer()
-                Text("Alles bleibt lokal")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Label("Quick Start", systemImage: "sparkles")
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+            Text(welcomeText("Die Fraktale werden lokal auf deinem Gerät berechnet.", "Fractals are rendered locally on your device."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
-            VStack(spacing: 13) {
-                quickTip(icon: "hand.draw", text: "Ziehe einen Bereich auf, um hineinzuzoomen.")
-                quickTip(icon: "hand.point.up.left", text: "Bewege die Ansicht mit zwei Fingern.")
-                quickTip(icon: "arrow.up.left.and.arrow.down.right", text: "Pinch zum Zoomen, Doppeltipp zum direkten Eintauchen.")
-                quickTip(icon: "star", text: "Der Stern speichert und öffnet deine Lieblingsorte.")
-                quickTip(icon: "square.and.arrow.up", text: "Exportiere das Fraktal als PNG — ohne Bedienoberfläche.")
+            VStack(alignment: .leading, spacing: 13) {
+                quickTip(icon: "hand.draw", text: welcomeText("Ziehe einen Bereich auf, um hineinzuzoomen.", "Drag to select an area and zoom in."))
+                quickTip(icon: "hand.point.up.left", text: welcomeText("Bewege die Ansicht mit zwei Fingern.", "Move the view with two fingers."))
+                quickTip(icon: "arrow.up.left.and.arrow.down.right", text: welcomeText("Pinch zum Zoomen, Doppeltipp zum direkten Eintauchen.", "Pinch to zoom, or double-tap to dive in."))
+                quickTip(icon: "arrow.uturn.backward", text: welcomeText("Mache den letzten Navigationsschritt rückgängig.", "Undo the last navigation step."))
+                quickTip(icon: "plus.magnifyingglass", text: welcomeText("Vergrößere oder verkleinere die Ansicht mit den Lupen.", "Use the magnifying glasses to zoom in or out."))
+                quickTip(icon: "arrow.counterclockwise", text: welcomeText("Setze die Ansicht des aktuellen Fraktals zurück.", "Reset the view of the current fractal."))
+                quickTip(icon: "line.3.horizontal.decrease", text: welcomeText("Wähle Fraktaltyp, Skin und Qualität: Fast, High oder Deep.", "Choose the fractal type, skin and quality: Fast, High or Deep."))
+                quickTip(icon: "slider.horizontal.3", text: welcomeText("Passe Iterationen und Effekte an, zum Beispiel den Glass-Effekt.", "Adjust iterations and effects, such as the glass effect."))
+                quickTip(icon: "star", text: welcomeText("Speichere und öffne deine Lieblingsorte.", "Save and open your favorite spots."))
+                quickTip(icon: "gauge", text: welcomeText("Blende den Renderstatus ein oder aus.", "Show or hide render status."))
+                quickTip(icon: "square.and.arrow.up", text: welcomeText("Exportiere das Fraktal als PNG – ohne Bedienoberfläche.", "Export the fractal as a PNG without the interface."))
             }
 
             Divider()
 
-            Text("Wähle Fast, High oder Deep in der Steuerleiste. Bei extremen Mandelbrot-Zooms wechselt Beauty of Fractals automatisch zur hochpräzisen CPU-Berechnung.")
+            Text(welcomeText("Bei extremen Mandelbrot-Zooms wechselt Beauty of Fractals automatisch zur hochpräzisen CPU-Berechnung.", "Deep Mandelbrot locations automatically switch to high-precision CPU rendering when ordinary coordinates are no longer enough."))
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
         }
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         }
+    }
+
+    private func welcomeText(_ german: String, _ english: String) -> String {
+        locale.language.languageCode?.identifier == "de" ? german : english
     }
 
     private func welcomeFeature(icon: String, title: String, text: String) -> some View {
@@ -6902,17 +6922,21 @@ private struct HelpSheet: View {
     }
 
     private func quickTip(icon: String, text: String) -> some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.cyan)
-                .frame(width: 28)
+                .frame(width: 28, height: 22, alignment: .center)
+                .accessibilityHidden(true)
 
             Text(text)
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+
 }
 
 private struct IOSWelcomeMonitorScene: View {
